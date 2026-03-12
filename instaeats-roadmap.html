@@ -878,7 +878,7 @@ async function populateLegendIfEmpty(){
 async function writeSheetData(data){
   const rows = dataToRows(data);
   // Clear sheet then write
-  await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${SHEET_NAME}!A:I:clear`,{
+  await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${SHEET_NAME}!A:I/clear`,{
     method:'POST', headers:{'Content-Type':'application/json'}
   });
   const resp = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${SHEET_NAME}!A1?valueInputOption=RAW`,{
