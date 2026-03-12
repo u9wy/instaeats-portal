@@ -114,7 +114,7 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .stat-label{font-size:12px;color:var(--pale);line-height:1.4;}
 
 /* STATUS LEGEND */
-.status-legend{display:flex;gap:16px;align-items:center;}
+.status-legend{display:flex;gap:14px;align-items:center;justify-content:center;}
 .sleg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--pale);}
 .sleg-dot{width:9px;height:9px;border-radius:50%;}
 
@@ -123,9 +123,10 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
   display:flex;align-items:center;justify-content:space-between;
   opacity:0;animation:fadeUp .8s forwards .55s;}
 .section-intro-text{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);}
-.track-legend{display:flex;gap:20px;}
+.legend-group{display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:260px;}
+.track-legend{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:flex-end;}
 .tleg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--pale);}
-.tleg-bar{width:24px;height:3px;border-radius:2px;}
+.tleg-bar{width:24px;height:3px;border-radius:2px;flex-shrink:0;}
 
 /* ROADMAP */
 .roadmap{position:relative;z-index:10;padding:60px 0 100px;}
@@ -468,15 +469,17 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
 
 <div class="section-intro">
   <div class="section-intro-text">— Roadmap Phases</div>
-  <div class="track-legend" id="trackLegend">
-    <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
-    <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
-    <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
-  </div>
-  <div class="status-legend" style="margin-top:12px;">
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
+  <div class="legend-group">
+    <div class="track-legend" id="trackLegend">
+      <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
+      <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
+      <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
+    </div>
+    <div class="status-legend">
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
+    </div>
   </div>
 </div>
 
@@ -700,20 +703,12 @@ function initTokenClient(){
         console.warn('[Roadmap] Token callback error:', resp.error);
         return;
       }
-      const wasSignedIn = !!token;
       token = resp.access_token;
       const saved = loadAuth();
       const u = saved?.user || await gfetch('https://www.googleapis.com/oauth2/v3/userinfo').then(r=>r.json()).catch(()=>null);
       if(u) saveAuthLocal(resp, u);
-      if(!wasSignedIn){
-        // Fresh sign-in — do full init
-        hideLoginOverlay();
-        await initSheet();
-      } else {
-        // Silent token refresh while already signed in — fetch fresh data in background
-        _lastDataFetch = 0;
-        await backgroundRefreshData();
-      }
+      hideLoginOverlay();
+      await initSheet();
     },
     error_callback:(e)=>{
       _signInInProgress = false;
@@ -1344,43 +1339,12 @@ document.getElementById('sectionModal').addEventListener('click',e=>{ if(e.targe
 // Boot!
 window.addEventListener('load', boot);
 
-// ── Visibility: refresh token + background data check on tab resume ──
-let _lastDataFetch = 0;
-const DATA_TTL = 60 * 1000; // re-fetch sheet at most once per minute
-
-async function backgroundRefreshData(){
-  if(!token || !sheetId || sheetId === 'PASTE_YOUR_SHEET_ID_HERE') return;
-  if(Date.now() - _lastDataFetch < DATA_TTL) return;
-  _lastDataFetch = Date.now();
-  try{
-    const fresh = await readSheetData();
-    if(!fresh) return;
-    const freshStr = JSON.stringify(fresh);
-    if(JSON.stringify(roadmapData) !== freshStr){
-      roadmapData = fresh;
-      renderAll();
-      console.info('[Roadmap] Data updated from sheet');
-    }
-    // Also check if legend changed
-    const freshLegend = await readLegendData();
-    if(freshLegend && JSON.stringify(freshLegend) !== JSON.stringify(pillLegend)){
-      pillLegend = freshLegend;
-      populatePillSelect();
-    }
-  }catch(e){
-    console.warn('[Roadmap] Background refresh failed', e);
-  }
-}
-
-document.addEventListener('visibilitychange', async ()=>{
-  if(document.visibilityState !== 'visible' || !tokenClient) return;
+// ── Visibility: silently refresh token on tab resume ──
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState !== 'visible' || !token || !tokenClient) return;
   const saved = loadAuth();
-  if(!saved || saved.expires_at <= Date.now() + 30000){
-    // Token expiring — refresh it; initTokenClient callback calls initSheet which fetches data
-    if(token) tokenClient.requestAccessToken({prompt:'none'});
-  } else if(token){
-    // Token still valid — silently check for data changes
-    await backgroundRefreshData();
+  if(!saved || saved.expires_at <= Date.now() + 10000){
+    tokenClient.requestAccessToken({prompt:'none'});
   }
 });
 </script>
