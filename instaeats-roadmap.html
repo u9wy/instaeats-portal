@@ -445,7 +445,14 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
   
   <div class="nav-right">
     <span class="phase-count" id="phaseCountLabel">… Phases</span>
-
+    Engineering</div>
+      <div class="leg"><div class="leg-dot" style="background:var(--coral)"></div>Business Dev</div>
+      <div class="leg"><div class="leg-dot" style="background:var(--doc)"></div>Documentation</div>
+    </div>
+    Done</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
+    </div>
     <a id="docLinkBadge" class="doc-link-badge" href="#" target="_blank" style="display:none">📊 Google Sheet</a>
   </div>
 </nav>
@@ -473,11 +480,6 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
     <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
     <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
     <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
-  </div>
-  <div class="status-legend">
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
   </div>
 </div>
 
@@ -512,7 +514,7 @@ const SCOPES = [
 ].join(' ');
 const LS_AUTH       = 'ie_auth';
 const LS_SHEET_ID   = 'ie_roadmap_sheet_id';
-const SHEET_NAME    = 'Roadmap';
+let SHEET_NAME = null; // resolved dynamically
 // ─── SET YOUR SHEET ID HERE ───────────────────────────────────────────────
 // After uploading InstaEats_Roadmap.xlsx to Google Sheets, paste the
 // spreadsheet ID from the URL:  .../spreadsheets/d/SHEET_ID_HERE/edit
@@ -628,6 +630,8 @@ function populatePillSelect(){
 function loadAuth(){ try{ return JSON.parse(localStorage.getItem(LS_AUTH)||'null'); }catch(e){return null;} }
 function saveAuthLocal(r,u){ localStorage.setItem(LS_AUTH,JSON.stringify({access_token:r.access_token,expires_at:Date.now()+(r.expires_in-60)*1000,user:u})); }
 
+function gfetch(url){ return fetch(url,{headers:{Authorization:'Bearer '+token}}); }
+
 let _refreshTimer = null;
 function scheduleRefresh(ms){
   if(_refreshTimer){ clearTimeout(_refreshTimer); _refreshTimer = null; }
@@ -638,7 +642,23 @@ function scheduleRefresh(ms){
   }, Math.max(0, ms));
 }
 
-function gfetch(url, opts={}){ return fetch(url,{...opts, headers:{...(opts.headers||{}), Authorization:'Bearer '+token}}); }
+function tryRefreshToken(){
+  return new Promise(resolve=>{
+    if(!tokenClient){ resolve(false); return; }
+    const prev = token;
+    const origCb = tokenClient._callback;
+    tokenClient._callback = (resp)=>{
+      tokenClient._callback = origCb;
+      if(resp.error||!resp.access_token){ resolve(false); return; }
+      token = resp.access_token;
+      const saved = loadAuth();
+      saveAuthLocal(resp, saved?.user||{});
+      resolve(true);
+    };
+    try{ tokenClient.requestAccessToken({prompt:''}); }
+    catch(e){ tokenClient._callback = origCb; resolve(false); }
+  });
+}
 
 function showLoginOverlay(){ document.getElementById('loginOverlay').classList.add('visible'); }
 function hideLoginOverlay(){ document.getElementById('loginOverlay').classList.remove('visible'); }
@@ -684,7 +704,6 @@ function initTokenClient(){
         return;
       }
       token = resp.access_token;
-      scheduleRefresh((resp.expires_in - 120) * 1000);
       const saved = loadAuth();
       const u = saved?.user || await gfetch('https://www.googleapis.com/oauth2/v3/userinfo').then(r=>r.json()).catch(()=>null);
       if(u) saveAuthLocal(resp, u);
@@ -712,7 +731,6 @@ async function boot(){
   const saved = loadAuth();
   if(saved && saved.access_token && saved.expires_at > Date.now()+10000){
     token = saved.access_token;
-    scheduleRefresh(saved.expires_at - Date.now() - 120000);
     hideLoginOverlay();
     await initSheet();
   } else {
@@ -846,6 +864,10 @@ async function ensureLegendSheet(){
     const resp = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`);
     if(!resp.ok) return;
     const meta = await resp.json();
+    if(!SHEET_NAME){
+      const dataSheet = meta.sheets && meta.sheets.find(s=>s.properties.title!=='PillLegend');
+      SHEET_NAME = dataSheet ? dataSheet.properties.title : 'Roadmap';
+    }
     const exists = meta.sheets && meta.sheets.some(s=>s.properties.title==='PillLegend');
     if(exists){ await populateLegendIfEmpty(); return; }
     // Create sheet
@@ -1318,6 +1340,9 @@ document.getElementById('editModal').addEventListener('click',e=>{ if(e.target==
 document.getElementById('phaseModal').addEventListener('click',e=>{ if(e.target===e.currentTarget) closePhaseModal(); });
 document.getElementById('sectionModal').addEventListener('click',e=>{ if(e.target===e.currentTarget) closeSectionModal(); });
 
+// Boot!
+window.addEventListener('load', boot);
+
 // ── Visibility: silently refresh token on tab resume if near expiry ──
 document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState !== 'visible' || !token || !tokenClient) return;
@@ -1327,9 +1352,6 @@ document.addEventListener('visibilitychange', ()=>{
     // error_callback will call showLoginOverlay() if the refresh fails
   }
 });
-
-// Boot!
-window.addEventListener('load', boot);
 </script>
 </body>
 </html>
