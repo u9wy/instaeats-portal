@@ -1934,12 +1934,35 @@ doSignOut = function(){
 };
 
 // ── Visibility: silently refresh token on tab resume if near expiry ──
-document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState !== 'visible' || !token || !tokenClient) return;
+let _lastPortalRefresh = 0;
+const PORTAL_REFRESH_TTL = 60 * 1000; // background data check at most once per minute
+
+async function backgroundDataCheck(){
+  if(!token) return;
+  if(Date.now() - _lastPortalRefresh < PORTAL_REFRESH_TTL) return;
+  _lastPortalRefresh = Date.now();
+  console.info('[Portal] Background data check on resume…');
+  try{
+    const savedStruct = loadStruct();
+    const structStale = !savedStruct || (Date.now() - savedStruct.savedAt) > STRUCT_TTL;
+    if(structStale){
+      await scanDriveAndBuild();
+    }
+    await backgroundRefreshDocs();
+  }catch(e){
+    console.warn('[Portal] Background data check failed', e);
+  }
+}
+
+document.addEventListener('visibilitychange', async ()=>{
+  if(document.visibilityState !== 'visible' || !tokenClient) return;
   const saved = loadAuth();
-  if(!saved || saved.expires_at <= Date.now() + 10000){
-    tokenClient.requestAccessToken({prompt:'none'});
-    // error_callback will call applySignedOutUI() if the refresh fails
+  if(!saved || saved.expires_at <= Date.now() + 30000){
+    // Token expiring — refresh it silently; onToken will call backgroundRefreshDocs
+    if(token) tokenClient.requestAccessToken({prompt:'none'});
+  } else if(token){
+    // Token still valid — just check for new data
+    await backgroundDataCheck();
   }
 });
 
