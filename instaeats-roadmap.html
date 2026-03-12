@@ -638,7 +638,7 @@ function scheduleRefresh(ms){
   }, Math.max(0, ms));
 }
 
-function gfetch(url){ return fetch(url,{headers:{Authorization:'Bearer '+token}}); }
+function gfetch(url, opts={}){ return fetch(url,{...opts, headers:{...(opts.headers||{}), Authorization:'Bearer '+token}}); }
 
 function showLoginOverlay(){ document.getElementById('loginOverlay').classList.add('visible'); }
 function hideLoginOverlay(){ document.getElementById('loginOverlay').classList.remove('visible'); }
