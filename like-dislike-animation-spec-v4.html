@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Like + Dislike Feature — Animation Spec</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #13131a;
+    --card: #1a1a24;
+    --border: #2a2a3a;
+    --text: #f0f0f5;
+    --muted: #6b6b80;
+    --tier1: #ff9f43;
+    --tier2: #ff6b9d;
+    --tier3: #a855f7;
+    --d1: #84cc16;    /* dislike tier 1 — sickly green */
+    --d2: #f97316;    /* dislike tier 2 — nauseous orange */
+    --d3: #dc2626;    /* dislike tier 3 — full rage red */
+  }
+
+  body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:20px 16px 60px; overflow-x:hidden; }
+
+  /* ── HEADER ── */
+  .header { width:100%; max-width:420px; margin-bottom:20px; }
+  .header h1 { font-family:'Space Mono',monospace; font-size:11px; letter-spacing:.18em; color:var(--muted); text-transform:uppercase; margin-bottom:5px; }
+  .header h2 { font-size:22px; font-weight:700; }
+  .header p  { font-size:13px; color:var(--muted); margin-top:4px; line-height:1.5; }
+
+  /* ── DUAL TIER ROWS ── */
+  .tier-group { width:100%; max-width:420px; margin-bottom:8px; }
+  .tier-group-label { font-family:'Space Mono',monospace; font-size:9px; letter-spacing:.16em; color:var(--muted); text-transform:uppercase; margin-bottom:6px; }
+  .tiers { display:flex; gap:8px; margin-bottom:18px; }
+  .tier-pill { flex:1; padding:10px 8px; border-radius:10px; border:1.5px solid var(--border); background:var(--surface); text-align:center; transition:all .3s ease; }
+  .tier-pill .emoji { font-size:18px; display:block; margin-bottom:3px; }
+  .tier-pill .label { font-size:10px; font-family:'Space Mono',monospace; color:var(--muted); display:block; }
+  .tier-pill .taps  { font-size:11px; font-weight:600; display:block; margin-top:2px; }
+  .tier-pill.t1 .taps { color:var(--tier1); }
+  .tier-pill.t2 .taps { color:var(--tier2); }
+  .tier-pill.t3 .taps { color:var(--tier3); }
+  .tier-pill.d1 .taps { color:var(--d1); }
+  .tier-pill.d2 .taps { color:var(--d2); }
+  .tier-pill.d3 .taps { color:var(--d3); }
+  .tier-pill.active.t1 { border-color:var(--tier1); background:rgba(255,159,67,.09); box-shadow:0 0 16px rgba(255,159,67,.25); }
+  .tier-pill.active.t2 { border-color:var(--tier2); background:rgba(255,107,157,.09); box-shadow:0 0 16px rgba(255,107,157,.25); }
+  .tier-pill.active.t3 { border-color:var(--tier3); background:rgba(168,85,247,.09);  box-shadow:0 0 16px rgba(168,85,247,.25); }
+  .tier-pill.active.d1 { border-color:var(--d1); background:rgba(132,204,22,.09); box-shadow:0 0 16px rgba(132,204,22,.25); }
+  .tier-pill.active.d2 { border-color:var(--d2); background:rgba(249,115,22,.09); box-shadow:0 0 16px rgba(249,115,22,.25); }
+  .tier-pill.active.d3 { border-color:var(--d3); background:rgba(220,38,38,.09);  box-shadow:0 0 16px rgba(220,38,38,.3); }
+
+  /* ── PHONE ── */
+  .phone { width:100%; max-width:380px; background:var(--surface); border-radius:36px; border:1.5px solid var(--border); overflow:hidden; box-shadow:0 40px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.04) inset; transition: border-color .5s ease; }
+  .phone.dislike-tint { border-color:rgba(220,38,38,.5); }
+  .phone-notch { width:120px; height:28px; background:#000; border-radius:0 0 18px 18px; margin:0 auto; }
+
+  /* ── POST CARD ── */
+  .post-card { position:relative; width:100%; aspect-ratio:4/5; background:linear-gradient(160deg,#1e1b2e,#12111c); cursor:pointer; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:none; user-select:none; }
+  .post-bg { position:absolute; inset:0; background:radial-gradient(ellipse at 30% 40%,rgba(255,100,100,.12),transparent 60%), radial-gradient(ellipse at 70% 70%,rgba(100,100,255,.08),transparent 50%); transition:background 1s ease; }
+  .post-bg.dislike { background:radial-gradient(ellipse at 50% 50%,rgba(220,38,38,.18),transparent 70%), radial-gradient(ellipse at 20% 80%,rgba(132,204,22,.08),transparent 50%); }
+  .post-pseudo-img { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:180px; height:180px; border-radius:24px; background:linear-gradient(135deg,#2a2040,#1a1530); border:1px solid rgba(255,255,255,.06); display:flex; align-items:center; justify-content:center; font-size:72px; filter:drop-shadow(0 8px 24px rgba(0,0,0,.4)); transition:transform .15s ease; z-index:5; }
+
+  /* ── BURST EMOJI (like + dislike share this element) ── */
+  .burst-emoji { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) scale(0); font-size:90px; opacity:0; pointer-events:none; z-index:25; }
+
+  /* ── LIKE ANIMATIONS ── */
+  .burst-emoji.tier1-enter { animation:t1Enter .45s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+  .burst-emoji.tier1-hold  { opacity:1; transform:translate(-50%,-50%) scale(1); animation:t1Breathe 2s ease-in-out infinite; }
+  .burst-emoji.tier2-enter { animation:t2Enter .5s  cubic-bezier(0.34,1.46,0.64,1) forwards; }
+  .burst-emoji.tier2-hold  { opacity:1; transform:translate(-50%,-50%) scale(1); animation:t2Sway 2.2s ease-in-out infinite; }
+  .burst-emoji.t1-slam-out { animation:t1SlamOut .25s cubic-bezier(0.4,0,1,1) forwards; }
+  .burst-emoji.tier3-enter { animation:t3Enter .5s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+  .burst-emoji.tier3-hold  { opacity:1; transform:translate(-50%,-50%) scale(1); animation:t3Breathe 1.8s ease-in-out infinite; }
+  .burst-emoji.tier3-pulse { animation:t3Pulse .15s ease-in-out forwards; }
+  .burst-emoji.t2-squash-out { animation:t2SquashOut .3s cubic-bezier(0.4,0,1,1) forwards; }
+
+  @keyframes t1Enter    { 0%{opacity:0;transform:translate(-50%,-50%) scale(.2) rotate(-12deg)} 70%{opacity:1;transform:translate(-50%,-50%) scale(1.15) rotate(4deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes t1SlamOut  { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 100%{opacity:0;transform:translate(-50%,-140%) scale(.5) rotate(20deg)} }
+  @keyframes t2Enter    { 0%{opacity:0;transform:translate(-50%,-50%) scale(0)} 40%{opacity:1;transform:translate(-50%,-50%) scale(1.35) rotate(-6deg)} 65%{transform:translate(-50%,-50%) scale(.94) rotate(3deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes t2SquashOut{ 0%{opacity:1;transform:translate(-50%,-50%) scale(1,1)} 40%{transform:translate(-50%,-40%) scale(1.2,.6)} 100%{opacity:0;transform:translate(-50%,20%) scale(.3,.2)} }
+  @keyframes t3Enter    { 0%{opacity:0;transform:translate(-50%,-50%) scale(0)} 30%{opacity:1;transform:translate(-50%,-50%) scale(1.6) rotate(12deg)} 55%{transform:translate(-50%,-50%) scale(.9) rotate(-5deg)} 75%{transform:translate(-50%,-50%) scale(1.08) rotate(2deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes t3Pulse    { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 50%{opacity:1;transform:translate(-50%,-50%) scale(1.14)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1)} }
+  @keyframes t1Breathe  { 0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-50%,-50%) scale(1.04)} }
+  @keyframes t2Sway     { 0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0deg)} 33%{transform:translate(-50%,-52%) scale(1.03) rotate(-2deg)} 66%{transform:translate(-50%,-48%) scale(1.02) rotate(2deg)} }
+  @keyframes t3Breathe  { 0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0deg)} 30%{transform:translate(-50%,-50%) scale(1.05) rotate(-2deg)} 70%{transform:translate(-50%,-50%) scale(.97) rotate(2deg)} }
+
+  /* ── DISLIKE ANIMATIONS ── */
+  /* D1: 😒 Grimace — slides in from bottom with a slow disgusted lean */
+  .burst-emoji.d1-enter { animation:d1Enter .5s cubic-bezier(0.34,1.3,0.64,1) forwards; }
+  .burst-emoji.d1-hold  { opacity:1; transform:translate(-50%,-50%) scale(1); animation:d1Grimace 3s ease-in-out infinite; }
+
+  /* D2: 🤢 Nauseated — lurches in with heave motion */
+  .burst-emoji.d2-enter     { animation:d2Enter .4s cubic-bezier(0.34,1.4,0.64,1) forwards; }
+  .burst-emoji.d2-hold      { opacity:1; transform:translate(-50%,-50%) scale(1); animation:d2Heave 1.4s ease-in-out infinite; }
+  .burst-emoji.d1-slump-out { animation:d1SlumpOut .3s ease-in forwards; }
+
+  /* D3: 🤮 Vomiting — detonates in violently, shudders with each progress tick */
+  .burst-emoji.d3-enter     { animation:d3Enter .55s cubic-bezier(0.34,1.6,0.64,1) forwards; }
+  .burst-emoji.d3-hold      { opacity:1; transform:translate(-50%,-50%) scale(1); animation:d3Convulse 0.9s ease-in-out infinite; }
+  .burst-emoji.d3-pulse     { animation:d3Pulse .2s ease-in-out forwards; }
+  .burst-emoji.d2-retch-out { animation:d2RetchOut .35s cubic-bezier(0.4,0,1,1) forwards; }
+
+  @keyframes d1Enter    { 0%{opacity:0;transform:translate(-50%,30%) scale(.4)} 60%{opacity:1;transform:translate(-50%,-55%) scale(1.1) rotate(-5deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes d1Grimace  { 0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0deg)} 25%{transform:translate(-50%,-52%) scale(1.02) rotate(-3deg)} 75%{transform:translate(-50%,-48%) scale(.99) rotate(2deg)} }
+  @keyframes d1SlumpOut { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 40%{transform:translate(-50%,-45%) scale(1.05,.9)} 100%{opacity:0;transform:translate(-50%,60%) scale(.5,.3) rotate(-10deg)} }
+
+  @keyframes d2Enter    { 0%{opacity:0;transform:translate(-50%,-50%) scale(0) rotate(15deg)} 35%{opacity:1;transform:translate(-50%,-50%) scale(1.3) rotate(-8deg)} 60%{transform:translate(-50%,-50%) scale(.92) rotate(4deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes d2Heave    { 0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0deg)} 20%{transform:translate(-50%,-54%) scale(1.06) rotate(-4deg)} 50%{transform:translate(-50%,-46%) scale(.95) rotate(3deg)} 70%{transform:translate(-50%,-53%) scale(1.04) rotate(-2deg)} }
+  @keyframes d2RetchOut { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 30%{transform:translate(-52%,-50%) scale(1.1,.8) rotate(-6deg)} 100%{opacity:0;transform:translate(-50%,80%) scale(.2,.4) rotate(-20deg)} }
+
+  @keyframes d3Enter    { 0%{opacity:0;transform:translate(-50%,-50%) scale(0)} 25%{opacity:1;transform:translate(-50%,-50%) scale(1.7) rotate(-15deg)} 45%{transform:translate(-50%,-50%) scale(.85) rotate(8deg)} 65%{transform:translate(-50%,-50%) scale(1.15) rotate(-4deg)} 80%{transform:translate(-50%,-50%) scale(.97) rotate(2deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+  @keyframes d3Convulse { 0%,100%{transform:translate(-50%,-50%) scale(1) rotate(0deg)} 15%{transform:translate(-52%,-50%) scale(1.03) rotate(-3deg)} 30%{transform:translate(-48%,-50%) scale(.98) rotate(3deg)} 45%{transform:translate(-51%,-52%) scale(1.02) rotate(-2deg)} 60%{transform:translate(-49%,-48%) scale(.99) rotate(2deg)} }
+  @keyframes d3Pulse    { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 40%{opacity:1;transform:translate(-50%,-50%) scale(1.18) rotate(-5deg)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0deg)} }
+
+  /* ── IDLE EXIT ── */
+  .burst-emoji.idle-exit { animation:idleExit .55s cubic-bezier(0.4,0,0.6,1) forwards !important; }
+  @keyframes idleExit { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 100%{opacity:0;transform:translate(-50%,-80%) scale(.6)} }
+  /* Dislike idle exit — sinks down */
+  .burst-emoji.idle-exit-down { animation:idleExitDown .55s cubic-bezier(0.4,0,0.6,1) forwards !important; }
+  @keyframes idleExitDown { 0%{opacity:1;transform:translate(-50%,-50%) scale(1)} 100%{opacity:0;transform:translate(-50%,40%) scale(.5)} }
+
+  /* ── SHOCKWAVE ── */
+  .shockwave { position:absolute; width:60px; height:60px; border-radius:50%; pointer-events:none; opacity:0; z-index:23; }
+  .shockwave.fire { animation:shockFire .55s ease-out forwards; }
+  @keyframes shockFire { 0%{opacity:.85;transform:translate(-50%,-50%) scale(.3)} 100%{opacity:0;transform:translate(-50%,-50%) scale(4.5)} }
+
+  /* ── SCREEN FLASH ── */
+  .screen-flash { position:absolute; inset:0; opacity:0; pointer-events:none; z-index:30; }
+  .screen-flash.flash-t2 { background:#ff6b9d; animation:flashQuick .35s ease-out forwards; }
+  .screen-flash.flash-t3 { background:#a855f7; animation:flashBoom  .45s ease-out forwards; }
+  .screen-flash.flash-d1 { background:#84cc16; animation:flashQuick .3s ease-out forwards; }
+  .screen-flash.flash-d2 { background:#f97316; animation:flashBoom  .4s ease-out forwards; }
+  .screen-flash.flash-d3 { background:#dc2626; animation:flashBoom  .5s ease-out forwards; }
+  @keyframes flashQuick { 0%{opacity:.3} 100%{opacity:0} }
+  @keyframes flashBoom  { 0%{opacity:0} 8%{opacity:.45} 100%{opacity:0} }
+
+  /* ── IDLE EXIT — power bar drain ── */
+  .power-bar-fill.draining { transition:width .9s linear !important; }
+
+  /* ── CHARGE BAR — dislike hold indicator (replaces ring) ── */
+  .charge-bar-wrap { position:absolute; bottom:0; left:0; right:0; z-index:28; opacity:0; pointer-events:none; transition:opacity .15s; }
+  .charge-bar-wrap.visible { opacity:1; }
+  /* Segment tick marks */
+  .charge-ticks { position:absolute; bottom:12px; left:0; right:0; display:flex; justify-content:space-around; padding:0 2px; z-index:30; }
+  .charge-tick  { width:2px; height:8px; background:rgba(0,0,0,.35); border-radius:1px; }
+  /* Track */
+  .charge-track { height:12px; background:rgba(0,0,0,.45); backdrop-filter:blur(4px); position:relative; overflow:hidden; }
+  .charge-fill  { position:absolute; top:0; left:0; height:100%; width:0%; background:var(--d1); transition:width .08s linear, background .4s ease; border-radius:0 3px 3px 0; }
+  /* Glow layer on top of fill */
+  .charge-glow  { position:absolute; top:0; left:0; height:100%; width:0%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.25)); pointer-events:none; transition:width .08s linear; }
+  /* Tier milestone pips */
+  .charge-pip   { position:absolute; top:0; bottom:0; width:3px; background:rgba(0,0,0,.5); z-index:2; }
+  .charge-pip.p1 { left:33%; }
+  .charge-pip.p2 { left:55%; }  /* 5/8 mark */
+  /* Label */
+  .charge-label { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-family:'Space Mono',monospace; font-size:9px; font-weight:700; color:rgba(255,255,255,.8); letter-spacing:.08em; text-transform:uppercase; white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.8); pointer-events:none; opacity:0; transition:opacity .2s; }
+  .charge-label.show { opacity:1; }
+  /* Shake animation for tier triggers */
+  @keyframes chargeShake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-4px)} 40%{transform:translateX(4px)} 60%{transform:translateX(-3px)} 80%{transform:translateX(3px)} }
+  .charge-track.shake { animation:chargeShake .3s ease; }
+
+  /* ── POWER BAR ── */
+  .power-bar-wrap { position:absolute; bottom:60px; left:24px; right:24px; z-index:26; opacity:0; transition:opacity .3s ease; }
+  .power-bar-wrap.visible { opacity:1; }
+  .power-bar-label { font-family:'Space Mono',monospace; font-size:10px; color:#a855f7; letter-spacing:.1em; text-transform:uppercase; margin-bottom:6px; text-shadow:0 0 10px rgba(168,85,247,.8); }
+  .power-bar-label.dislike-label { color:var(--d3); text-shadow:0 0 10px rgba(220,38,38,.8); }
+  .power-bar-track { height:6px; background:rgba(255,255,255,.1); border-radius:3px; overflow:hidden; border:1px solid rgba(168,85,247,.3); }
+  .power-bar-track.dislike-track { border-color:rgba(220,38,38,.3); }
+  .power-bar-fill  { height:100%; background:linear-gradient(90deg,#a855f7,#ec4899,#f59e0b); border-radius:3px; width:0%; transition:width .12s ease-out; box-shadow:0 0 10px rgba(168,85,247,.6); }
+  .power-bar-fill.dislike-fill { background:linear-gradient(90deg,#84cc16,#f97316,#dc2626); box-shadow:0 0 10px rgba(220,38,38,.6); }
+
+  /* ── TAP COUNTER / HOLD TIMER ── */
+  .tap-counter-display { position:absolute; top:20px; right:20px; z-index:27; background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.1); border-radius:20px; padding:6px 14px; font-family:'Space Mono',monospace; font-size:13px; font-weight:700; color:#fff; backdrop-filter:blur(8px); opacity:0; transition:opacity .2s; }
+  .tap-counter-display.visible { opacity:1; }
+  .tap-counter-display.dislike-counter { border-color:rgba(220,38,38,.4); color:#fca5a5; }
+
+  /* ── HAPTIC INDICATOR ── */
+  .haptic-indicator { position:absolute; bottom:16px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:5px 12px; font-size:10px; font-family:'Space Mono',monospace; color:var(--muted); white-space:nowrap; backdrop-filter:blur(8px); opacity:0; transition:opacity .2s; pointer-events:none; }
+  .haptic-indicator.show { opacity:1; }
+
+  /* ── TRANSITION LABEL ── */
+  .transition-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,.82); border:1.5px solid rgba(255,255,255,.15); border-radius:14px; padding:8px 16px; font-family:'Space Mono',monospace; font-size:11px; color:#fff; white-space:nowrap; backdrop-filter:blur(10px); z-index:40; opacity:0; pointer-events:none; letter-spacing:.06em; }
+  .transition-label.show { animation:labelPop 1.6s ease forwards; }
+  @keyframes labelPop { 0%{opacity:0;transform:translate(-50%,-50%) scale(.85)} 15%{opacity:1;transform:translate(-50%,-50%) scale(1.04)} 25%{transform:translate(-50%,-50%) scale(1)} 70%{opacity:1} 100%{opacity:0;transform:translate(-50%,-60%) scale(.9)} }
+
+  /* ── DISLIKE PARTICLES (skulls/Xs instead of sparkles) ── */
+  .particle { position:absolute; pointer-events:none; z-index:24; opacity:0; font-size:16px; }
+  @keyframes particleAnim { 0%{opacity:0;transform:translate(0,0) scale(0) rotate(0deg)} 30%{opacity:1;transform:translate(var(--tx),var(--ty)) scale(1) rotate(var(--tr))} 100%{opacity:0;transform:translate(calc(var(--tx)*1.5),calc(var(--ty)*1.5 + 20px)) scale(.4) rotate(calc(var(--tr)*2))} }
+
+  /* ── TAP RIPPLE ── */
+  .tap-ripple { position:absolute; width:50px; height:50px; border-radius:50%; background:rgba(255,255,255,.15); transform:translate(-50%,-50%) scale(0); pointer-events:none; z-index:22; animation:tapRipple .4s ease-out forwards; }
+  @keyframes tapRipple { to{transform:translate(-50%,-50%) scale(3);opacity:0} }
+
+  /* ── POST UI BAR ── */
+  .post-ui { padding:12px 16px 16px; background:var(--card); border-top:1px solid var(--border); display:flex; align-items:center; gap:16px; }
+  .ui-btn { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); font-weight:500; }
+  .ui-btn .icon { font-size:20px; }
+  .like-count  { font-weight:600; color:var(--text); transition:all .3s; }
+  .like-count.bumped    { color:var(--tier1); }
+  .dislike-count { font-weight:600; color:var(--text); transition:all .3s; }
+  .dislike-count.bumped { color:var(--d3); }
+
+  /* ── SPEC SECTION ── */
+  .spec-section { width:100%; max-width:420px; margin-top:22px; }
+  .spec-section-title { font-family:'Space Mono',monospace; font-size:10px; letter-spacing:.16em; color:var(--muted); text-transform:uppercase; margin-bottom:12px; }
+  .spec-card { background:var(--surface); border:1.5px solid var(--border); border-radius:14px; margin-bottom:10px; overflow:hidden; }
+  .spec-card-header { display:flex; align-items:center; gap:10px; padding:12px 14px 10px; border-bottom:1px solid var(--border); }
+  .spec-badge { font-family:'Space Mono',monospace; font-size:10px; font-weight:700; padding:3px 8px; border-radius:6px; letter-spacing:.06em; }
+  .spec-badge.t1 { background:rgba(255,159,67,.15); color:var(--tier1); }
+  .spec-badge.t2 { background:rgba(255,107,157,.15); color:var(--tier2); }
+  .spec-badge.t3 { background:rgba(168,85,247,.15);  color:var(--tier3); }
+  .spec-badge.d1 { background:rgba(132,204,22,.15);  color:var(--d1); }
+  .spec-badge.d2 { background:rgba(249,115,22,.15);  color:var(--d2); }
+  .spec-badge.d3 { background:rgba(220,38,38,.15);   color:var(--d3); }
+  .spec-badge.tx { background:rgba(255,255,255,.07); color:var(--muted); }
+  .spec-badge.dx { background:rgba(220,38,38,.07);   color:rgba(220,38,38,.7); }
+  .spec-card-title { font-size:13px; font-weight:600; }
+  .spec-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+  .spec-row-inner { display:flex; gap:9px; align-items:flex-start; }
+  .spec-row-inner .icon { font-size:14px; flex-shrink:0; margin-top:1px; }
+  .spec-row-inner p { font-size:12px; color:var(--muted); line-height:1.55; }
+  .spec-row-inner p strong { color:var(--text); font-weight:600; }
+
+  /* ── HAPTIC ENGINE PANEL ── */
+  .haptic-panel { width:100%; max-width:420px; margin-top:22px; background:var(--surface); border:1.5px solid var(--border); border-radius:16px; overflow:hidden; }
+  .haptic-panel-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .haptic-panel-title  { display:flex; align-items:center; gap:8px; }
+  .haptic-panel-title span { font-family:'Space Mono',monospace; font-size:10px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; }
+  .haptic-status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); transition:all .15s; flex-shrink:0; }
+  .haptic-status-dot.firing { background:#4ade80; box-shadow:0 0 8px #4ade80; animation:dotPulse .3s ease-out; }
+  @keyframes dotPulse { 0%{transform:scale(1)} 50%{transform:scale(1.8)} 100%{transform:scale(1)} }
+  .haptic-support { font-size:10px; font-family:'Space Mono',monospace; color:var(--muted); }
+  .haptic-support.ok { color:#4ade80; }
+  .haptic-support.no { color:#f87171; }
+  .haptic-waveform { padding:14px 16px 10px; }
+  .waveform-label { font-size:10px; font-family:'Space Mono',monospace; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; display:flex; justify-content:space-between; }
+  .waveform-track { height:48px; background:rgba(255,255,255,.03); border-radius:8px; position:relative; overflow:hidden; border:1px solid rgba(255,255,255,.06); display:flex; align-items:flex-end; gap:2px; padding:4px 6px; }
+  .waveform-bar { border-radius:3px 3px 0 0; flex-shrink:0; opacity:0; transition:opacity .1s; min-width:4px; }
+  .waveform-bar.light  { background:rgba(255,159,67,.7); }
+  .waveform-bar.medium { background:rgba(255,107,157,.8); }
+  .waveform-bar.heavy  { background:rgba(168,85,247,.9); }
+  .waveform-bar.rumble { background:linear-gradient(180deg,#f59e0b,#ef4444); }
+  .waveform-bar.d-low  { background:rgba(132,204,22,.8); }
+  .waveform-bar.d-mid  { background:rgba(249,115,22,.9); }
+  .waveform-bar.d-high { background:rgba(220,38,38,.9); }
+  .waveform-bar.d-max  { background:linear-gradient(180deg,#dc2626,#7f1d1d); }
+  .waveform-bar.active { opacity:1 !important; }
+  .waveform-playhead { position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,.5); border-radius:1px; left:0; transition:left .08s linear; }
+  .haptic-log { padding:0 16px 14px; max-height:130px; overflow-y:auto; }
+  .haptic-log::-webkit-scrollbar { width:3px; }
+  .haptic-log::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+  .log-row { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,.04); }
+  .log-row:last-child { border-bottom:none; }
+  .log-time { font-family:'Space Mono',monospace; font-size:9px; color:var(--muted); width:38px; flex-shrink:0; }
+  .log-badge { font-size:9px; font-family:'Space Mono',monospace; font-weight:700; padding:2px 6px; border-radius:4px; flex-shrink:0; }
+  .log-badge.light  { background:rgba(255,159,67,.15);  color:var(--tier1); }
+  .log-badge.medium { background:rgba(255,107,157,.15); color:var(--tier2); }
+  .log-badge.heavy  { background:rgba(168,85,247,.15);  color:var(--tier3); }
+  .log-badge.rumble { background:rgba(239,68,68,.2);    color:#f87171; }
+  .log-badge.d-low  { background:rgba(132,204,22,.15);  color:var(--d1); }
+  .log-badge.d-mid  { background:rgba(249,115,22,.15);  color:var(--d2); }
+  .log-badge.d-high { background:rgba(220,38,38,.15);   color:var(--d3); }
+  .log-badge.d-max  { background:rgba(127,29,29,.3);    color:#fca5a5; }
+  .log-desc { font-size:11px; color:var(--muted); line-height:1.4; flex:1; }
+  .log-desc strong { color:var(--text); font-weight:500; }
+  .log-pattern { font-family:'Space Mono',monospace; font-size:9px; color:#4ade80; margin-left:auto; flex-shrink:0; }
+  .haptic-impl { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border); }
+  .impl-chip { flex:1; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .impl-chip .platform  { font-size:9px; font-family:'Space Mono',monospace; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; margin-bottom:4px; }
+  .impl-chip .api-name  { font-size:11px; font-weight:600; color:var(--text); margin-bottom:2px; }
+  .impl-chip .api-detail{ font-size:10px; color:var(--muted); line-height:1.4; }
+
+  /* ── RESET ── */
+  .reset-btn { width:100%; max-width:420px; margin-top:16px; padding:14px; background:var(--surface); border:1.5px solid var(--border); border-radius:14px; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:all .2s; }
+  .reset-btn:hover { border-color:#ff4d6d; color:var(--text); }
+
+  /* ── SPARKLE ── */
+  .sparkle { position:absolute; font-size:20px; pointer-events:none; z-index:24; opacity:0; }
+  @keyframes sparkleAnim { 0%{opacity:0;transform:translate(0,0) scale(0) rotate(0deg)} 30%{opacity:1;transform:translate(var(--tx),var(--ty)) scale(1) rotate(var(--tr))} 100%{opacity:0;transform:translate(calc(var(--tx)*1.5),calc(var(--ty)*1.5 + 20px)) scale(.5) rotate(calc(var(--tr)*2))} }
+  .tap-ripple { position:absolute; width:50px; height:50px; border-radius:50%; background:rgba(255,255,255,.15); transform:translate(-50%,-50%) scale(0); pointer-events:none; z-index:22; animation:tapRipple .4s ease-out forwards; }
+  @keyframes tapRipple { to{transform:translate(-50%,-50%) scale(3);opacity:0} }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Design Spec · Like + Dislike Feature</h1>
+  <h2>Progressive Interaction Animations</h2>
+  <p><strong>Like:</strong> rapid double-tap to escalate. &nbsp;|&nbsp; <strong>Dislike:</strong> long press — hold 0.6s, 1.2s, 2s to escalate.</p>
+</div>
+
+<!-- Like pills -->
+<div class="tier-group">
+  <div class="tier-group-label">❤️ Like — rapid taps</div>
+  <div class="tiers">
+    <div class="tier-pill t1" id="pill1"><span class="emoji">🤌</span><span class="label">Tier 1</span><span class="taps">2 taps</span></div>
+    <div class="tier-pill t2" id="pill2"><span class="emoji">🫠</span><span class="label">Tier 2</span><span class="taps">5+ taps</span></div>
+    <div class="tier-pill t3" id="pill3"><span class="emoji">🤯</span><span class="label">Tier 3</span><span class="taps">8+ taps</span></div>
+  </div>
+</div>
+
+<!-- Dislike pills -->
+<div class="tier-group">
+  <div class="tier-group-label">💀 Dislike — long press</div>
+  <div class="tiers">
+    <div class="tier-pill d1" id="dpill1"><span class="emoji">😒</span><span class="label">D-Tier 1</span><span class="taps">0.6s hold</span></div>
+    <div class="tier-pill d2" id="dpill2"><span class="emoji">🤢</span><span class="label">D-Tier 2</span><span class="taps">1.2s hold</span></div>
+    <div class="tier-pill d3" id="dpill3"><span class="emoji">🤮</span><span class="label">D-Tier 3</span><span class="taps">2s hold</span></div>
+  </div>
+</div>
+
+<div class="phone" id="phone">
+  <div class="phone-notch"></div>
+  <div class="post-card" id="postCard">
+    <div class="post-bg" id="postBg"></div>
+    <div class="post-pseudo-img" id="pseudoImg">🍜</div>
+
+    <div style="position:absolute;inset:0;pointer-events:none;z-index:20;">
+      <div class="burst-emoji" id="burstEmoji"></div>
+      <div class="shockwave" id="shockwave"></div>
+      <div class="screen-flash" id="screenFlash"></div>
+    </div>
+
+    <!-- Dislike charge bar (bottom of post) -->
+    <div class="charge-bar-wrap" id="chargeBarWrap">
+      <div class="charge-label" id="chargeLabel">HOLD TO DISLIKE</div>
+      <div class="charge-track" id="chargeTrack">
+        <div class="charge-fill"  id="chargeFill"></div>
+        <div class="charge-glow"  id="chargeGlow"></div>
+        <div class="charge-pip p1"></div>
+        <div class="charge-pip p2"></div>
+      </div>
+    </div>
+
+    <div class="power-bar-wrap" id="powerBar">
+      <div class="power-bar-label" id="powerLabel">⚡ KEEP TAPPING...</div>
+      <div class="power-bar-track" id="powerBarTrack"><div class="power-bar-fill" id="powerFill"></div></div>
+    </div>
+
+    <div class="tap-counter-display" id="tapDisplay">×1</div>
+    <div class="haptic-indicator" id="hapticIndicator">📳</div>
+    <div class="transition-label" id="transLabel"></div>
+  </div>
+
+  <div class="post-ui">
+    <div class="ui-btn"><span class="icon">❤️</span><span class="like-count" id="likeCount">12.4k</span></div>
+    <div class="ui-btn"><span class="icon">👎</span><span class="dislike-count" id="dislikeCount">341</span></div>
+    <div class="ui-btn"><span class="icon">💬</span><span>843</span></div>
+    <div class="ui-btn"><span class="icon">↗️</span><span>Share</span></div>
+  </div>
+</div>
+
+<!-- ── SPEC NOTES ── -->
+<div class="spec-section">
+  <div class="spec-section-title">Like — Animation + Transition Specification</div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge t1">TIER 1</span><span class="spec-card-title">🤌 "Kiss the Chef" — 2 rapid taps</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">🎬</span><p><strong>Entry:</strong> Spring pop from scale 0.2 → 1.15 (overshoot) → 1.0. Slight rotation wobble. 450ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">⏸</span><p><strong>Hold:</strong> Gentle breathing loop ±4%. Persists until next tier or 1s idle timeout.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Single medium impact.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge tx">TRANSITION</span><span class="spec-card-title">Like T1 → T2</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">💨</span><p><strong>Out (🤌):</strong> Rockets upward off-screen (translateY –140%), shrinks and rotates 20°. 250ms, fast ease-out. No fade — physically knocked aside.</p></div>
+      <div class="spec-row-inner"><span class="icon">💥</span><p><strong>In (🫠):</strong> Detonates from scale 0 → 1.35 overshoot → 0.94 → 1.0. 80ms overlap with outgoing. 500ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Heavy × 1 + 3 rapid light pulses at 40ms intervals.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge t2">TIER 2</span><span class="spec-card-title">🫠 "The Melt" — 5+ rapid taps</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">⏸</span><p><strong>Hold:</strong> Slow side-sway (±2° rotation) with a downward drip-bob (±4px). Loops.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Heavy × 1, then 3 light pulses at 80ms intervals.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge tx">TRANSITION</span><span class="spec-card-title">Like T2 → T3</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">🫗</span><p><strong>Out (🫠):</strong> Squashes into floor (scaleX 1.2, scaleY 0.6) then deflates off the bottom edge. 300ms. Direction is down — signals T3 is a heavier force.</p></div>
+      <div class="spec-row-inner"><span class="icon">💣</span><p><strong>In (🤯):</strong> Explodes to 1.6× (largest overshoot), pinballs: 0.9 → 1.2 → 0.95 → 1.0. 100ms overlap. 500ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Long heavy rumble (200ms) → dramatic silence (60ms) → small thud.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge t3">TIER 3</span><span class="spec-card-title">🤯 "Mind Blown" — 8+ taps, power bar</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">👆</span><p><strong>Per-tap:</strong> Micro-pulse (scale 1.0→1.14→1.0), shockwave ring, sparkles. Power bar fills 0→100% over taps 8–15.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic escalation:</strong> Medium → Heavy → Rapid heavy → Max sustained rumble as bar fills.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-section-title" style="margin-top:24px">Dislike — Long Press Specification</div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge d1">D-TIER 1</span><span class="spec-card-title">😒 "Unbothered" — 0.6s hold</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">⏳</span><p><strong>Charge (0–3s):</strong> A sickly green ring draws around the post image as you hold. The ring fills clockwise. The post subtly desaturates. At 3s the ring completes and pulses.</p></div>
+      <div class="spec-row-inner"><span class="icon">🎬</span><p><strong>Entry:</strong> Slides up from below the frame with a slight overshoot and a dismissive head-tilt lean (rotate –5° → 0°). 500ms spring entry.</p></div>
+      <div class="spec-row-inner"><span class="icon">⏸</span><p><strong>Hold:</strong> Slow contemptuous side-to-side head shake (±3° rotation, ±2px vertical bob). Loops.</p></div>
+      <div class="spec-row-inner"><span class="icon">🚪</span><p><strong>Exit:</strong> Slumps and sinks off the bottom of the frame. Directional opposite of like exits.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Slow rhythmic pulse during hold (1 light buzz per second). At 3s trigger: 2 medium impacts with 80ms gap — a distinct "registered" signal.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge dx">TRANSITION</span><span class="spec-card-title">Dislike D1 → D2</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">🤢</span><p><strong>Out (😒 slumps):</strong> The grimace emoji squashes sideways and drops off-frame to the left with a –10° rotate, as if losing composure. 300ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">💀</span><p><strong>In (🤢 lurches):</strong> Enters from scale 0 with a rotation overshoot suggesting a heave — 1.3× → 0.92× → 1.0×. Ring changes to orange. 400ms. Screen flashes orange briefly.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> 3 medium impacts in quick succession (50ms apart) — mimics the sensation of a stomach lurch.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge d2">D-TIER 2</span><span class="spec-card-title">🤢 "Nauseated" — 1.2s hold</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">⏸</span><p><strong>Hold:</strong> Heaving animation — bobs up and lurches forward repeatedly (scale pulse + translate). Rotation ±4°. Cycle: 1.4s. The post background bleeds to a sickly orange-green tint.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Rhythmic double-buzz every 1.2s (mimics heave rhythm). Each buzz: light + medium 60ms apart.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge dx">TRANSITION</span><span class="spec-card-title">Dislike D2 → D3</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">💀</span><p><strong>Out (🤢 retches down):</strong> Lurches sideways, scaleX widens to 1.1 and scaleY crushes, then falls off the bottom-right corner with a –20° spin. 350ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">🤮</span><p><strong>In (🤮 detonates):</strong> Explodes from center at 1.7× scale (largest dislike overshoot), multi-bounce landing: 0.85 → 1.15 → 0.97 → 1.0. Rotation swings –15° → +8° → –3° → 0°. Screen flash: red. 550ms.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic:</strong> Single long heavy rumble (250ms) — the heaviest single hit in the entire system. Followed by 200ms silence.</p></div>
+    </div>
+  </div>
+
+  <div class="spec-card">
+    <div class="spec-card-header"><span class="spec-badge d3">D-TIER 3</span><span class="spec-card-title">🤮 "Full Disgust" — 2s hold, rage bar</span></div>
+    <div class="spec-body">
+      <div class="spec-row-inner"><span class="icon">⏸</span><p><strong>Hold:</strong> Continuous convulsive shudder — rapid micro-translations (±2px) and rotation oscillations (±3°) at ~0.9s cycle. Communicates barely-contained revulsion.</p></div>
+      <div class="spec-row-inner"><span class="icon">📊</span><p><strong>Rage bar:</strong> A red power bar fills as the hold continues past 8s (full at 15s). Labels: "Can't look…" → "Getting worse…" → "Pure disgust…" → "ABSOLUTE REVULSION!!"</p></div>
+      <div class="spec-row-inner"><span class="icon">🌑</span><p><strong>Post tint:</strong> Screen vignette darkens to red around edges as bar fills.</p></div>
+      <div class="spec-row-inner"><span class="icon">📳</span><p><strong>Haptic escalation:</strong> Rapid light buzzes (every 300ms) → medium buzz every 200ms → heavy every 150ms → at max: long sustained double-heavy rumble [150,50,200]ms.</p></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── HAPTIC ENGINE PANEL ── -->
+<div class="haptic-panel">
+  <div class="haptic-panel-header">
+    <div class="haptic-panel-title">
+      <div class="haptic-status-dot" id="hapticDot"></div>
+      <span>Haptic Engine Monitor</span>
+    </div>
+    <span class="haptic-support" id="hapticSupport">checking...</span>
+  </div>
+  <div class="haptic-waveform">
+    <div class="waveform-label">
+      <span>Vibration waveform</span>
+      <span id="waveformActive" style="color:var(--muted)">idle</span>
+    </div>
+    <div class="waveform-track" id="waveformTrack">
+      <div class="waveform-playhead"></div>
+    </div>
+  </div>
+  <div class="haptic-log" id="hapticLog">
+    <div class="log-row" style="opacity:.4">
+      <span class="log-time">--:--</span>
+      <span class="log-badge medium">IDLE</span>
+      <span class="log-desc">Waiting for interaction...</span>
+    </div>
+  </div>
+  <div class="haptic-impl">
+    <div class="impl-chip">
+      <div class="platform">iOS</div>
+      <div class="api-name">UIImpactFeedbackGenerator</div>
+      <div class="api-detail">.light / .medium / .heavy · UINotificationFeedbackGenerator for transitions</div>
+    </div>
+    <div class="impl-chip">
+      <div class="platform">Android</div>
+      <div class="api-name">VibrationEffect</div>
+      <div class="api-detail">createOneShot() · createWaveform() · EFFECT_CLICK / EFFECT_HEAVY_CLICK</div>
+    </div>
+  </div>
+</div>
+
+<button class="reset-btn" onclick="resetAll()">↺ Reset Demo</button>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  DOM REFS
+// ══════════════════════════════════════════════════════
+const postCard    = document.getElementById('postCard');
+const postBg      = document.getElementById('postBg');
+const burstEmoji  = document.getElementById('burstEmoji');
+const screenFlash = document.getElementById('screenFlash');
+const powerBar    = document.getElementById('powerBar');
+const powerBarTrack = document.getElementById('powerBarTrack');
+const powerFill   = document.getElementById('powerFill');
+const powerLabel  = document.getElementById('powerLabel');
+const tapDisplay  = document.getElementById('tapDisplay');
+const haptic      = document.getElementById('hapticIndicator');
+const pseudoImg   = document.getElementById('pseudoImg');
+const likeCount   = document.getElementById('likeCount');
+const dislikeCount= document.getElementById('dislikeCount');
+const transLabel  = document.getElementById('transLabel');
+const phone       = document.getElementById('phone');
+// charge bar refs
+const chargeBarWrap = document.getElementById('chargeBarWrap');
+const chargeFill    = document.getElementById('chargeFill');
+const chargeGlow    = document.getElementById('chargeGlow');
+const chargeTrack   = document.getElementById('chargeTrack');
+const chargeLabel   = document.getElementById('chargeLabel');
+const pill1 = document.getElementById('pill1'), pill2 = document.getElementById('pill2'), pill3 = document.getElementById('pill3');
+const dpill1= document.getElementById('dpill1'),dpill2= document.getElementById('dpill2'),dpill3= document.getElementById('dpill3');
+const hapticDot      = document.getElementById('hapticDot');
+const hapticSupport  = document.getElementById('hapticSupport');
+const hapticLog      = document.getElementById('hapticLog');
+const waveformTrack  = document.getElementById('waveformTrack');
+const waveformActive = document.getElementById('waveformActive');
+
+// ══════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════
+let tapCount = 0, currentTier = 0, lastTapTime = 0, liked = false;
+let dislikeTier = 0, pressStartTime = 0, pressDelayTimer = null, pressInterval = null, holdActive = false;
+let barMilestones = new Set(), rageMilestones = new Set();
+let idleTimer = null, waveformTimeout = null, sessionStart = Date.now();
+let rageInterval = null;
+
+const TAP_WINDOW   = 700;
+const likePowerLabels  = ['⚡ KEEP TAPPING...','🔥 GETTING HOT...','💥 ALMOST THERE...','🌋 OVERLOADING...','🤯 MAXIMUM FLAVOR!!'];
+const ragePowerLabels  = ['😣 Can\'t look...','🤢 Getting worse...','😱 Pure disgust...','💀 ABSOLUTE REVULSION!!','💀 ABSOLUTE REVULSION!!'];
+const RING_CIRCUMFERENCE = 502; // 2π × 80
+
+// ══════════════════════════════════════════════════════
+//  HAPTIC ENGINE
+// ══════════════════════════════════════════════════════
+const HAPTIC = {
+  TAP_LIGHT:   { pattern:[15],                      type:'light',  label:'Light tap',               ios:'.light', android:'EFFECT_CLICK' },
+  T1_LIKE:     { pattern:[40],                      type:'medium', label:'Like registered',          ios:'.medium', android:'EFFECT_HEAVY_CLICK' },
+  T1_TO_T2:    { pattern:[60,40,20,40,20,40],       type:'heavy',  label:'T1→T2 slam + triple',      ios:'.heavy + 3× .light', android:'createWaveform([60,40,20,40,20,40],255)' },
+  T2_TO_T3:    { pattern:[200,60,30],               type:'heavy',  label:'T2→T3 long rumble+silence',ios:'.heavy rigid 200ms', android:'createOneShot(200,255)' },
+  T3_TAP_LOW:  { pattern:[35],                      type:'medium', label:'T3 tap — low',             ios:'.medium', android:'EFFECT_HEAVY_CLICK' },
+  T3_TAP_MID:  { pattern:[55],                      type:'heavy',  label:'T3 tap — mid',             ios:'.heavy', android:'createOneShot(55,200)' },
+  T3_TAP_HIGH: { pattern:[75,20,30],                type:'heavy',  label:'T3 tap — high',            ios:'.heavy+.rigid', android:'createWaveform([75,20,30],240)' },
+  T3_TAP_MAX:  { pattern:[90,15,50,15,30],          type:'rumble', label:'T3 tap — max',             ios:'.heavy×3 rapid', android:'createWaveform([90,15,50,15,30],255)' },
+  T3_BAR_20:   { pattern:[25,30,25],                type:'medium', label:'Like power 20%',           ios:'2× .light', android:'createWaveform([25,30,25],160)' },
+  T3_BAR_40:   { pattern:[35,25,35],                type:'medium', label:'Like power 40%',           ios:'2× .medium', android:'createWaveform([35,25,35],190)' },
+  T3_BAR_60:   { pattern:[50,20,50],                type:'heavy',  label:'Like power 60%',           ios:'2× .heavy', android:'createWaveform([50,20,50],220)' },
+  T3_BAR_80:   { pattern:[65,18,65,18,40],          type:'heavy',  label:'Like power 80%',           ios:'3× .heavy', android:'createWaveform([65,18,65,18,40],240)' },
+  T3_MAXOUT:   { pattern:[100,30,80,30,60,30,200],  type:'rumble', label:'🌋 MAX OUT',               ios:'sustained .heavy', android:'createWaveform([100,30,80,30,60,30,200],255)' },
+  // Dislike — hold pulses
+  D_HOLD_TICK: { pattern:[20],                      type:'d-low',  label:'Dislike hold tick',        ios:'.light (1/s)', android:'EFFECT_CLICK' },
+  D1_TRIGGER:  { pattern:[40,80,40],                type:'d-low',  label:'D1 dislike registered',    ios:'2× .medium (80ms gap)', android:'createWaveform([40,80,40],180)' },
+  D1_TO_D2:    { pattern:[50,50,50,50,50],          type:'d-mid',  label:'D1→D2 triple lurch',       ios:'3× .medium (50ms apart)', android:'createWaveform([50,50,50,50,50],200)' },
+  D2_HEAVE:    { pattern:[30,60,50],                type:'d-mid',  label:'D2 heave rhythm',          ios:'.light+.medium 60ms gap', android:'createWaveform([30,60,50],180)' },
+  D2_TO_D3:    { pattern:[250,200,80],              type:'d-high', label:'D2→D3 heavy revulsion',    ios:'.heavy rigid 250ms', android:'createOneShot(250,255)' },
+  D3_TAP_LOW:  { pattern:[30],                      type:'d-low',  label:'Rage — low',               ios:'.light rapid', android:'EFFECT_CLICK' },
+  D3_TAP_MID:  { pattern:[50],                      type:'d-mid',  label:'Rage — mid',               ios:'.medium', android:'EFFECT_HEAVY_CLICK' },
+  D3_TAP_HIGH: { pattern:[70,30,40],                type:'d-high', label:'Rage — high',              ios:'.heavy burst', android:'createWaveform([70,30,40],230)' },
+  D3_MAXOUT:   { pattern:[150,50,200],              type:'d-max',  label:'💀 ABSOLUTE REVULSION',    ios:'double .heavy sustained', android:'createWaveform([150,50,200],255)' },
+};
+
+const vibrateSupported = 'vibrate' in navigator;
+hapticSupport.textContent = vibrateSupported ? '✓ vibrate API active' : '✗ vibrate unsupported (iOS)';
+hapticSupport.className   = 'haptic-support ' + (vibrateSupported ? 'ok' : 'no');
+
+function vibrateNow(pattern) {
+  if (vibrateSupported) try { navigator.vibrate(pattern); } catch(e) {}
+}
+
+function fireHaptic(key) {
+  const h = HAPTIC[key]; if (!h) return;
+  vibrateNow(h.pattern);
+  hapticDot.classList.remove('firing'); void hapticDot.offsetWidth; hapticDot.classList.add('firing');
+  setTimeout(() => hapticDot.classList.remove('firing'), 350);
+  haptic.textContent = '📳 ' + h.label;
+  haptic.classList.add('show'); clearTimeout(haptic._t);
+  haptic._t = setTimeout(() => haptic.classList.remove('show'), 1600);
+  addLog(h); drawWaveform(h);
+}
+
+function drawWaveform(h) {
+  clearTimeout(waveformTimeout);
+  waveformTrack.innerHTML = '<div class="waveform-playhead" id="wph"></div>';
+  const ph = document.getElementById('wph');
+  const totalMs = h.pattern.reduce((a,b)=>a+b,0);
+  const trackW  = waveformTrack.offsetWidth - 12;
+  waveformActive.textContent = h.label;
+  const colorMap = { light:'#ff9f43', medium:'#ff6b9d', heavy:'#a855f7', rumble:'#ef4444', 'd-low':'#84cc16', 'd-mid':'#f97316', 'd-high':'#dc2626', 'd-max':'#7f1d1d' };
+  waveformActive.style.color = colorMap[h.type] || '#ff9f43';
+  let xOff = 0;
+  h.pattern.forEach((ms,i) => {
+    if (i%2!==0) { xOff += (ms/totalMs)*trackW+2; return; }
+    const bar = document.createElement('div');
+    bar.className = 'waveform-bar '+h.type;
+    const w = Math.max(4,(ms/totalMs)*trackW-2);
+    const ht = Math.min(90, 25+(ms/120)*65);
+    bar.style.cssText = `width:${w}px;height:${ht}%;position:absolute;bottom:4px;left:${xOff+6}px;`;
+    waveformTrack.appendChild(bar);
+    const delay = h.pattern.slice(0,i).reduce((a,b)=>a+b,0);
+    setTimeout(()=>bar.classList.add('active'), delay);
+    setTimeout(()=>bar.classList.remove('active'), delay+ms);
+    xOff += w+2;
+  });
+  let elapsed=0; ph.style.left='0px';
+  const anim = () => { elapsed+=16; const p=Math.min(elapsed/totalMs,1); ph.style.left=(p*trackW)+'px'; if(p<1) requestAnimationFrame(anim); };
+  requestAnimationFrame(anim);
+  waveformTimeout = setTimeout(()=>{ waveformActive.textContent='idle'; waveformActive.style.color='var(--muted)'; waveformTrack.innerHTML='<div class="waveform-playhead"></div>'; }, totalMs+500);
+}
+
+function addLog(h) {
+  const ph = hapticLog.querySelector('[style*="opacity:.4"]'); if(ph) ph.remove();
+  const elapsed = ((Date.now()-sessionStart)/1000).toFixed(1);
+  const row = document.createElement('div'); row.className='log-row';
+  row.innerHTML = `<span class="log-time">${elapsed}s</span><span class="log-badge ${h.type}">${h.type.toUpperCase()}</span><span class="log-desc"><strong>${h.label}</strong></span><span class="log-pattern">[${h.pattern.join('·')}]ms</span>`;
+  hapticLog.insertBefore(row, hapticLog.firstChild);
+  while(hapticLog.children.length>8) hapticLog.removeChild(hapticLog.lastChild);
+}
+
+// ══════════════════════════════════════════════════════
+//  VISUAL HELPERS
+// ══════════════════════════════════════════════════════
+function showTransLabel(msg) {
+  transLabel.textContent = msg; transLabel.className='transition-label';
+  void transLabel.offsetWidth; transLabel.className='transition-label show';
+}
+function spawnShockwave(color, top, left, borderW) {
+  const sw = document.createElement('div'); sw.className='shockwave';
+  sw.style.cssText = `top:${top};left:${left};margin-top:-30px;margin-left:-30px;border-color:${color};border-width:${borderW||3}px;`;
+  postCard.appendChild(sw); void sw.offsetWidth; sw.className='shockwave fire';
+  setTimeout(()=>sw.remove(), 700);
+}
+function spawnParticles(type) {
+  const likeSets = { 1:['✨','💫','❤️'], 2:['✨','💫','🌟','💧'], 3:['✨','⭐','💫','🔥','⚡','💥'] };
+  const dislikeSets = { 1:['💢','😤','🙄'], 2:['🤢','💀','😖','💩'], 3:['💀','☠️','🤮','💔','🖤','🔥'] };
+  const isDislike = type < 0;
+  const tier = Math.abs(type);
+  const sets = isDislike ? dislikeSets : likeSets;
+  const emojis = sets[tier]; const count = tier===3 ? 8 : 4;
+  for (let i=0; i<count; i++) {
+    const s = document.createElement('div'); s.className = isDislike ? 'particle' : 'sparkle';
+    s.textContent = emojis[i%emojis.length];
+    const angle = (Math.PI*2/count)*i + Math.random()*.5, dist = 55+Math.random()*65;
+    s.style.setProperty('--tx',`${Math.cos(angle)*dist}px`);
+    s.style.setProperty('--ty',`${Math.sin(angle)*dist}px`);
+    s.style.setProperty('--tr',`${(Math.random()-.5)*360}deg`);
+    s.style.cssText += `top:50%;left:50%;margin-top:-10px;margin-left:-10px;animation:${isDislike?'particleAnim':'sparkleAnim'} ${.55+Math.random()*.4}s ease-out ${Math.random()*.1}s forwards;`;
+    postCard.appendChild(s); setTimeout(()=>s.remove(), 1200);
+  }
+}
+function spawnRipple(x,y) {
+  const r=document.createElement('div'); r.className='tap-ripple';
+  r.style.left=x+'px'; r.style.top=y+'px';
+  postCard.appendChild(r); setTimeout(()=>r.remove(),450);
+}
+function setPills(t) {
+  [pill1,pill2,pill3,dpill1,dpill2,dpill3].forEach(p=>p.classList.remove('active'));
+  if(t===1) pill1.classList.add('active');
+  if(t===2) pill2.classList.add('active');
+  if(t===3) { pill2.classList.add('active'); pill3.classList.add('active'); }
+}
+function setDPills(t) {
+  [pill1,pill2,pill3,dpill1,dpill2,dpill3].forEach(p=>p.classList.remove('active'));
+  if(t>=1) dpill1.classList.add('active');
+  if(t>=2) dpill2.classList.add('active');
+  if(t>=3) dpill3.classList.add('active');
+}
+
+// ══════════════════════════════════════════════════════
+//  RING PROGRESS (dislike charge)
+// ══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+//  CHARGE BAR — dislike hold indicator
+// ══════════════════════════════════════════════════════
+const CHARGE_COLORS = { d1:'#84cc16', d2:'#f97316', d3:'#dc2626' };
+
+function updateChargeBar(pct, stage) {
+  chargeBarWrap.classList.add('visible');
+  const color = stage==='d3'?CHARGE_COLORS.d3 : stage==='d2'?CHARGE_COLORS.d2 : CHARGE_COLORS.d1;
+  chargeFill.style.width=(pct*100)+'%';
+  chargeFill.style.background=color;
+  chargeGlow.style.width=(pct*100)+'%';
+  chargeLabel.classList.add('show');
+}
+function shakeChargeBar() {
+  chargeTrack.classList.remove('shake'); void chargeTrack.offsetWidth; chargeTrack.classList.add('shake');
+  setTimeout(()=>chargeTrack.classList.remove('shake'),350);
+}
+function hideChargeBar() {
+  chargeBarWrap.classList.remove('visible'); chargeLabel.classList.remove('show');
+  chargeFill.style.width='0%'; chargeGlow.style.width='0%';
+}
+
+// ══════════════════════════════════════════════════════
+//  DISLIKE HOLD LOGIC
+// ══════════════════════════════════════════════════════
+const PRESS_THRESHOLD = 250; // ms before we commit to treating touch as a hold
+
+// Stage timing (ms from press start)
+const D1_TIME = 600;
+const D2_TIME = 1200;
+const D3_TIME = 2000;
+
+// Explosive haptic patterns for stage hits
+const STAGE_PATTERNS = {
+  d1: [80, 40, 80],               // double thud
+  d2: [120, 30, 80, 30, 120],     // triple slam
+  d3: [200, 40, 150, 40, 200],    // sustained double-heavy
+};
+
+// Pre-armed vibration timeouts — set from touchstart so they fire
+// from within the user gesture context window
+let stageVibTimers = [];
+
+function armStageVibrations() {
+  stageVibTimers.forEach(t => clearTimeout(t));
+  stageVibTimers = [
+    setTimeout(() => { if(holdActive) navigator.vibrate && navigator.vibrate(STAGE_PATTERNS.d1); }, D1_TIME),
+    setTimeout(() => { if(holdActive) navigator.vibrate && navigator.vibrate(STAGE_PATTERNS.d2); }, D2_TIME),
+    setTimeout(() => { if(holdActive) navigator.vibrate && navigator.vibrate(STAGE_PATTERNS.d3); }, D3_TIME),
+  ];
+}
+
+function disarmStageVibrations() {
+  stageVibTimers.forEach(t => clearTimeout(t));
+  stageVibTimers = [];
+}
+
+function startDislikeHold() {
+  holdActive=true;
+  clearTimeout(idleTimer);
+  if(currentTier>0){ currentTier=0; tapCount=0; burstEmoji.className='burst-emoji'; burstEmoji.textContent=''; powerBar.classList.remove('visible'); [pill1,pill2,pill3].forEach(p=>p.classList.remove('active')); }
+  dislikeTier=0; rageMilestones=new Set();
+  chargeLabel.textContent='HOLD TO DISLIKE';
+  updateChargeBar(0,'d1');
+  let lastHoldTick=0;
+  pressInterval=setInterval(()=>{
+    const held=Date.now()-pressStartTime;
+    let pct, stage;
+    if(held<D1_TIME)       { pct=held/D1_TIME*0.33;                         stage='d1'; }
+    else if(held<D2_TIME)  { pct=0.33+((held-D1_TIME)/(D2_TIME-D1_TIME))*0.22; stage='d2'; }
+    else                   { pct=0.55+((held-D2_TIME)/(D3_TIME-D2_TIME))*0.45; stage='d3'; }
+    updateChargeBar(Math.min(1,pct), stage);
+    if     (held>=D3_TIME&&dislikeTier<3){ shakeChargeBar(); fireHaptic('D2_TO_D3'); triggerDislikeD3first(); chargeLabel.textContent='💀 RAGE MODE'; }
+    else if(held>=D2_TIME&&dislikeTier<2){ shakeChargeBar(); fireHaptic('D1_TO_D2'); triggerDislikeD2();      chargeLabel.textContent='🤢 NAUSEATED'; }
+    else if(held>=D1_TIME&&dislikeTier<1){ shakeChargeBar(); fireHaptic('D1_TRIGGER'); triggerDislikeD1();    chargeLabel.textContent='😒 DISLIKED'; }
+    if(dislikeTier===3){ updateRageTick(held); }
+    else if(Math.floor(held/1000)>lastHoldTick){ lastHoldTick=Math.floor(held/1000); }
+    tapDisplay.textContent=(held/1000).toFixed(1)+'s';
+    tapDisplay.classList.add('visible','dislike-counter');
+  },80);
+}
+
+function cancelDislikeHold() {
+  clearTimeout(pressDelayTimer); pressDelayTimer=null;
+  disarmStageVibrations();
+  if(!holdActive) return;
+  holdActive=false;
+  clearInterval(pressInterval); pressInterval=null;
+  hideChargeBar();
+  tapDisplay.classList.remove('dislike-counter');
+  if(dislikeTier>0) scheduleIdleOut();
+  else tapDisplay.classList.remove('visible');
+}
+
+// ══════════════════════════════════════════════════════
+//  EVENT LISTENERS — clean gesture separation
+//  A touch is a TAP if lifted before PRESS_THRESHOLD.
+//  A touch is a HOLD if it exceeds PRESS_THRESHOLD ms.
+//  They never overlap.
+// ══════════════════════════════════════════════════════
+// Store touch position at touchstart — touches[] is empty by touchend on mobile
+let storedTapX = 0, storedTapY = 0;
+
+postCard.addEventListener('touchstart', (e)=>{
+  if(e.touches.length>1) return;
+  pressStartTime=Date.now();
+  // Capture position NOW while touches[] is populated
+  const rect=postCard.getBoundingClientRect();
+  storedTapX=e.touches[0].clientX - rect.left;
+  storedTapY=e.touches[0].clientY - rect.top;
+  // Pre-arm stage vibrations FROM this gesture context so they fire on mobile
+  armStageVibrations();
+  pressDelayTimer=setTimeout(()=>{ pressDelayTimer=null; startDislikeHold(); }, PRESS_THRESHOLD);
+  e.preventDefault();
+},{passive:false});
+
+postCard.addEventListener('touchend', (e)=>{
+  if(pressDelayTimer){
+    // Quick tap — commit as like, disarm hold vibrations
+    clearTimeout(pressDelayTimer); pressDelayTimer=null;
+    disarmStageVibrations();
+    handleTap(storedTapX, storedTapY);
+  } else {
+    cancelDislikeHold();
+  }
+  e.preventDefault();
+},{passive:false});
+
+postCard.addEventListener('touchcancel', ()=>{
+  clearTimeout(pressDelayTimer); pressDelayTimer=null; cancelDislikeHold();
+});
+
+postCard.addEventListener('mousedown', (e)=>{
+  pressStartTime=Date.now();
+  const rect=postCard.getBoundingClientRect();
+  storedTapX=e.clientX-rect.left; storedTapY=e.clientY-rect.top;
+  armStageVibrations();
+  pressDelayTimer=setTimeout(()=>{ pressDelayTimer=null; startDislikeHold(); }, PRESS_THRESHOLD);
+});
+postCard.addEventListener('mouseup', (e)=>{
+  if(pressDelayTimer){ clearTimeout(pressDelayTimer); pressDelayTimer=null; disarmStageVibrations(); handleTap(storedTapX, storedTapY); }
+  else cancelDislikeHold();
+});
+postCard.addEventListener('mouseleave', ()=>{ clearTimeout(pressDelayTimer); pressDelayTimer=null; cancelDislikeHold(); });
+
+// ══════════════════════════════════════════════════════
+//  LIKE TIER TRIGGERS
+// ══════════════════════════════════════════════════════
+function triggerLikeT1() {
+  if(currentTier>=1) return; currentTier=1;
+  burstEmoji.textContent='🤌'; burstEmoji.style.fontSize='90px';
+  burstEmoji.className='burst-emoji tier1-enter';
+  setTimeout(()=>{ if(currentTier===1) burstEmoji.className='burst-emoji tier1-hold'; }, 450);
+  spawnParticles(1); setPills(1);
+  if(!liked){ liked=true; likeCount.textContent='12.4k+'; likeCount.classList.add('bumped'); setTimeout(()=>likeCount.classList.remove('bumped'),600); }
+  pseudoImg.style.transform='translate(-50%,-50%) scale(1.07)';
+  setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',300);
+}
+function triggerLikeT2() {
+  if(currentTier>=2) return; const wasT1=currentTier===1; currentTier=2;
+  if(wasT1){ burstEmoji.className='burst-emoji t1-slam-out'; showTransLabel('💥 Like T1→T2: slam-out + explode-in'); setTimeout(()=>{ burstEmoji.textContent='🫠'; burstEmoji.style.fontSize='100px'; burstEmoji.className='burst-emoji tier2-enter'; setTimeout(()=>{ if(currentTier===2) burstEmoji.className='burst-emoji tier2-hold'; },500); },170); }
+  else { burstEmoji.textContent='🫠'; burstEmoji.style.fontSize='100px'; burstEmoji.className='burst-emoji tier2-enter'; setTimeout(()=>{ if(currentTier===2) burstEmoji.className='burst-emoji tier2-hold'; },500); }
+  spawnShockwave('rgba(255,107,157,.9)','50%','50%');
+  screenFlash.className='screen-flash flash-t2'; setTimeout(()=>screenFlash.className='screen-flash',400);
+  spawnParticles(2); setPills(2);
+  pseudoImg.style.transform='translate(-50%,-50%) scale(1.12)'; setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',400);
+}
+function triggerLikeT3first() {
+  currentTier=3; barMilestones=new Set();
+  burstEmoji.className='burst-emoji t2-squash-out'; showTransLabel('🌋 Like T2→T3: squash-down + detonate');
+  setTimeout(()=>{ burstEmoji.textContent='🤯'; burstEmoji.style.fontSize='110px'; burstEmoji.className='burst-emoji tier3-enter'; },200);
+  setTimeout(()=>{ screenFlash.className='screen-flash flash-t3'; setTimeout(()=>screenFlash.className='screen-flash',500); },40);
+  spawnShockwave('rgba(168,85,247,.9)','42%','50%'); spawnParticles(3); setPills(3);
+  powerBar.classList.add('visible'); powerFill.style.width='0%'; powerLabel.textContent=likePowerLabels[0];
+  powerLabel.classList.remove('dislike-label'); powerBarTrack.classList.remove('dislike-track'); powerFill.classList.remove('dislike-fill');
+  pseudoImg.style.transform='translate(-50%,-50%) scale(1.1)'; setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',400);
+}
+function triggerLikeT3tap(tapNum) {
+  burstEmoji.className='burst-emoji tier3-pulse'; setTimeout(()=>{ if(currentTier===3) burstEmoji.className='burst-emoji tier3-hold'; },150);
+  const level=Math.min(100,((tapNum-8)/7)*100);
+  powerFill.style.width=level+'%'; powerLabel.textContent=likePowerLabels[Math.min(4,Math.floor(level/20))];
+  if(level>=100) fireHaptic('T3_TAP_MAX'); else if(level>=70) fireHaptic('T3_TAP_HIGH'); else if(level>=40) fireHaptic('T3_TAP_MID'); else fireHaptic('T3_TAP_LOW');
+  const milestoneMap=[[20,'T3_BAR_20'],[40,'T3_BAR_40'],[60,'T3_BAR_60'],[80,'T3_BAR_80'],[100,'T3_MAXOUT']];
+  for(const [thresh,key] of milestoneMap){ if(level>=thresh && !barMilestones.has(thresh)){ barMilestones.add(thresh); setTimeout(()=>fireHaptic(key),80); if(thresh===100){ powerLabel.textContent='🌋 MAXED OUT!!!'; [0,120,240].forEach(d=>setTimeout(()=>spawnShockwave(['rgba(255,200,0,.9)','rgba(255,100,200,.9)','rgba(100,200,255,.9)'][d/120],(30+Math.random()*40)+'%',(30+Math.random()*40)+'%'),d)); } break; } }
+  spawnShockwave(`rgba(${168-Math.floor(level)},${85+Math.floor(level/2)},247,.7)`,(38+Math.random()*12)+'%',(42+Math.random()*16)+'%');
+  spawnParticles(3);
+  if(tapNum%3===0){ screenFlash.className='screen-flash flash-t3'; setTimeout(()=>screenFlash.className='screen-flash',500); }
+  pseudoImg.style.transform=`translate(-50%,-50%) scale(${1+Math.random()*.14})`; setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',250);
+}
+
+// ══════════════════════════════════════════════════════
+//  DISLIKE TIER TRIGGERS
+// ══════════════════════════════════════════════════════
+function triggerDislikeD1() {
+  if(dislikeTier>=1) return; dislikeTier=1;
+  burstEmoji.textContent='😒'; burstEmoji.style.fontSize='90px';
+  burstEmoji.className='burst-emoji d1-enter';
+  setTimeout(()=>{ if(dislikeTier===1) burstEmoji.className='burst-emoji d1-hold'; },500);
+  spawnParticles(-1); setDPills(1);
+  dislikeCount.textContent=parseInt(dislikeCount.textContent)+1+'';
+  dislikeCount.classList.add('bumped'); setTimeout(()=>dislikeCount.classList.remove('bumped'),600);
+  postBg.classList.add('dislike');
+}
+function triggerDislikeD2() {
+  if(dislikeTier>=2) return; dislikeTier=2;
+  burstEmoji.className='burst-emoji d1-slump-out'; showTransLabel('🤢 Dislike D1→D2: slump-out + lurch-in');
+  setTimeout(()=>{ burstEmoji.textContent='🤢'; burstEmoji.style.fontSize='100px'; burstEmoji.className='burst-emoji d2-enter'; setTimeout(()=>{ if(dislikeTier===2) burstEmoji.className='burst-emoji d2-hold'; },400); },200);
+  spawnShockwave('rgba(249,115,22,.9)','50%','50%');
+  screenFlash.className='screen-flash flash-d2'; setTimeout(()=>screenFlash.className='screen-flash',400);
+  spawnParticles(-2); setDPills(2);
+  pseudoImg.style.transform='translate(-50%,-50%) scale(.96)'; setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',400);
+}
+function triggerDislikeD3first() {
+  dislikeTier=3; rageMilestones=new Set();
+  burstEmoji.className='burst-emoji d2-retch-out'; showTransLabel('💀 Dislike D2→D3: retch-out + detonate');
+  setTimeout(()=>{ burstEmoji.textContent='🤮'; burstEmoji.style.fontSize='110px'; burstEmoji.className='burst-emoji d3-enter'; setTimeout(()=>{ if(dislikeTier===3) burstEmoji.className='burst-emoji d3-hold'; },550); },230);
+  setTimeout(()=>{ screenFlash.className='screen-flash flash-d3'; setTimeout(()=>screenFlash.className='screen-flash',550); },50);
+  spawnShockwave('rgba(220,38,38,.9)','48%','50%',4); spawnParticles(-3); setDPills(3);
+  powerBar.classList.add('visible'); powerFill.style.width='0%'; powerLabel.textContent=ragePowerLabels[0];
+  powerLabel.classList.add('dislike-label'); powerBarTrack.classList.add('dislike-track'); powerFill.classList.add('dislike-fill');
+  phone.classList.add('dislike-tint');
+  pseudoImg.style.transform='translate(-50%,-50%) scale(.93)'; setTimeout(()=>pseudoImg.style.transform='translate(-50%,-50%) scale(1)',500);
+}
+function updateRageTick(holdMs) {
+  if(dislikeTier<3) return;
+  const level = Math.min(100,((holdMs-D3_TIME)/7000)*100);
+  powerFill.style.width=level+'%'; powerLabel.textContent=ragePowerLabels[Math.min(3,Math.floor(level/25))];
+  // Pulse emoji on each tick
+  burstEmoji.className='burst-emoji d3-pulse'; setTimeout(()=>{ if(dislikeTier===3) burstEmoji.className='burst-emoji d3-hold'; },200);
+  // Escalating haptic
+  if(level>=100){ fireHaptic('D3_MAXOUT'); powerLabel.textContent='💀 ABSOLUTE REVULSION!!'; [0,150,300].forEach(d=>setTimeout(()=>spawnShockwave(['rgba(220,38,38,.9)','rgba(127,29,29,.9)','rgba(239,68,68,.9)'][d/150],(25+Math.random()*50)+'%',(25+Math.random()*50)+'%',4),d)); }
+  else if(level>=60) fireHaptic('D3_TAP_HIGH');
+  else if(level>=30) fireHaptic('D3_TAP_MID');
+  else               fireHaptic('D3_TAP_LOW');
+  spawnShockwave(`rgba(220,38,38,${.3+level/200})`,(38+Math.random()*14)+'%',(38+Math.random()*24)+'%');
+  spawnParticles(-3);
+  const milestoneMap=[[25,'D3_TAP_MID'],[50,'D3_TAP_HIGH'],[75,'D3_TAP_HIGH'],[100,'D3_MAXOUT']];
+  for(const [thresh,key] of milestoneMap){ if(level>=thresh && !rageMilestones.has(thresh)){ rageMilestones.add(thresh); setTimeout(()=>fireHaptic(key),80); break; } }
+}
+
+// ══════════════════════════════════════════════════════
+//  IDLE OUT
+// ══════════════════════════════════════════════════════
+function scheduleIdleOut() { clearTimeout(idleTimer); idleTimer=setTimeout(()=>idleOut(),1000); }
+
+function idleOut() {
+  const isDisl = dislikeTier > 0;
+  if(currentTier===3 || dislikeTier===3){
+    powerFill.classList.add('draining'); powerFill.style.width='0%';
+    powerLabel.textContent='↓ releasing...';
+  }
+  burstEmoji.className = 'burst-emoji ' + (isDisl ? 'idle-exit-down' : 'idle-exit');
+  clearInterval(rageInterval); rageInterval=null;
+  setTimeout(()=>{
+    powerBar.classList.remove('visible'); powerFill.classList.remove('draining');
+    powerFill.style.width='0%'; powerLabel.textContent=likePowerLabels[0];
+    powerLabel.classList.remove('dislike-label'); powerBarTrack.classList.remove('dislike-track'); powerFill.classList.remove('dislike-fill');
+    [pill1,pill2,pill3,dpill1,dpill2,dpill3].forEach(p=>p.classList.remove('active'));
+    tapDisplay.classList.remove('visible');
+    burstEmoji.className='burst-emoji'; burstEmoji.textContent='';
+    postBg.classList.remove('dislike'); phone.classList.remove('dislike-tint');
+    tapCount=0; currentTier=0; dislikeTier=0; barMilestones=new Set(); rageMilestones=new Set();
+  },700);
+}
+
+// ══════════════════════════════════════════════════════
+//  LIKE TAP HANDLER
+//  tapX/tapY are pre-captured from touchstart (touches[]
+//  is empty by the time touchend fires on mobile)
+// ══════════════════════════════════════════════════════
+function handleTap(tapX, tapY) {
+  if(holdActive) return;
+  const now=Date.now();
+  let pat=HAPTIC.TAP_LIGHT.pattern;
+  if(now-lastTapTime<=TAP_WINDOW){
+    if(tapCount+1>=8&&currentTier<3)      pat=HAPTIC.T2_TO_T3.pattern;
+    else if(tapCount+1>=5&&currentTier<2) pat=HAPTIC.T1_TO_T2.pattern;
+    else if(tapCount+1>=2&&currentTier<1) pat=HAPTIC.T1_LIKE.pattern;
+  }
+  vibrateNow(pat);
+  clearTimeout(idleTimer);
+  spawnRipple(tapX, tapY);
+  if(now-lastTapTime>TAP_WINDOW){ tapCount=0; currentTier=0; dislikeTier=0; barMilestones=new Set(); [pill1,pill2,pill3,dpill1,dpill2,dpill3].forEach(p=>p.classList.remove('active')); powerBar.classList.remove('visible'); }
+  lastTapTime=now; tapCount++;
+  if(tapCount>=8&&currentTier<3)      fireHaptic('T2_TO_T3');
+  else if(tapCount>=5&&currentTier<2) fireHaptic('T1_TO_T2');
+  else if(tapCount>=2&&currentTier<1) fireHaptic('T1_LIKE');
+  else if(currentTier===3){ const lv=Math.min(100,((tapCount-8)/7)*100); if(lv>=100) fireHaptic('T3_TAP_MAX'); else if(lv>=70) fireHaptic('T3_TAP_HIGH'); else if(lv>=40) fireHaptic('T3_TAP_MID'); else fireHaptic('T3_TAP_LOW'); }
+  else fireHaptic('TAP_LIGHT');
+  tapDisplay.textContent='×'+tapCount; tapDisplay.classList.add('visible'); tapDisplay.classList.remove('dislike-counter');
+  clearTimeout(tapDisplay._t); tapDisplay._t=setTimeout(()=>tapDisplay.classList.remove('visible'),1100);
+  if(tapCount>=8){ if(currentTier<3) triggerLikeT3first(); else triggerLikeT3tap(tapCount); }
+  else if(tapCount>=5) triggerLikeT2();
+  else if(tapCount>=2) triggerLikeT1();
+  scheduleIdleOut();
+}
+
+// ══════════════════════════════════════════════════════
+//  RESET
+// ══════════════════════════════════════════════════════
+function resetAll() {
+  clearTimeout(idleTimer); clearTimeout(pressDelayTimer); clearInterval(pressInterval); clearInterval(rageInterval);
+  holdActive=false; tapCount=0; currentTier=0; dislikeTier=0; liked=false; pressStartTime=0;
+  barMilestones=new Set(); rageMilestones=new Set(); sessionStart=Date.now(); lastTapTime=0;
+  burstEmoji.className='burst-emoji'; burstEmoji.textContent='';
+  screenFlash.className='screen-flash';
+  powerBar.classList.remove('visible'); powerFill.classList.remove('draining','dislike-fill');
+  powerBarTrack.classList.remove('dislike-track'); powerLabel.classList.remove('dislike-label');
+  powerFill.style.width='0%'; powerLabel.textContent=likePowerLabels[0];
+  tapDisplay.classList.remove('visible','dislike-counter'); haptic.classList.remove('show');
+  transLabel.className='transition-label'; postBg.classList.remove('dislike'); phone.classList.remove('dislike-tint');
+  likeCount.textContent='12.4k'; likeCount.classList.remove('bumped');
+  dislikeCount.textContent='341'; dislikeCount.classList.remove('bumped');
+  [pill1,pill2,pill3,dpill1,dpill2,dpill3].forEach(p=>p.classList.remove('active'));
+  hideChargeBar();
+  hapticLog.innerHTML=`<div class="log-row" style="opacity:.4"><span class="log-time">--:--</span><span class="log-badge medium">IDLE</span><span class="log-desc">Waiting for interaction...</span></div>`;
+  waveformTrack.innerHTML='<div class="waveform-playhead"></div>'; waveformActive.textContent='idle'; waveformActive.style.color='var(--muted)';
+}
+</script>
+</body>
+</html>
