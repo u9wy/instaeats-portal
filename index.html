@@ -971,6 +971,7 @@ async function scanDriveAndBuild(){
       const docs = files
         .filter(f=>f.mimeType!=='application/vnd.google-apps.folder')
         .filter(f=>f.name.toLowerCase() !== '-roadmap-')
+        .filter(f=>f.name.toLowerCase() !== '-to do list-')
         .map(f=>({
           key: f.id,
           id: f.id,
