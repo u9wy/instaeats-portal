@@ -114,7 +114,7 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .stat-label{font-size:12px;color:var(--pale);line-height:1.4;}
 
 /* STATUS LEGEND */
-.status-legend{display:flex;gap:16px;align-items:center;}
+.status-legend{display:flex;gap:14px;align-items:center;justify-content:center;}
 .sleg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--pale);}
 .sleg-dot{width:9px;height:9px;border-radius:50%;}
 
@@ -123,9 +123,10 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
   display:flex;align-items:center;justify-content:space-between;
   opacity:0;animation:fadeUp .8s forwards .55s;}
 .section-intro-text{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);}
-.track-legend{display:flex;gap:20px;}
+.legend-group{display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:260px;}
+.track-legend{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:flex-end;}
 .tleg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--pale);}
-.tleg-bar{width:24px;height:3px;border-radius:2px;}
+.tleg-bar{width:24px;height:3px;border-radius:2px;flex-shrink:0;}
 
 /* ROADMAP */
 .roadmap{position:relative;z-index:10;padding:60px 0 100px;}
@@ -468,15 +469,17 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
 
 <div class="section-intro">
   <div class="section-intro-text">— Roadmap Phases</div>
-  <div class="track-legend" id="trackLegend">
-    <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
-    <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
-    <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
-  </div>
-  <div class="status-legend" style="margin-top:12px;">
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
-    <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
+  <div class="legend-group">
+    <div class="track-legend" id="trackLegend">
+      <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
+      <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
+      <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
+    </div>
+    <div class="status-legend">
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
+      <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
+    </div>
   </div>
 </div>
 

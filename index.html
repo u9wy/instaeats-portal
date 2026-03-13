@@ -723,21 +723,52 @@ setTimeout(()=>{ hideBuildOverlay(); }, 12000);
 let _refreshTimer = null;
 
 function scheduleRefresh(ms){
-  // Cancel any pending refresh before scheduling a new one
   if(_refreshTimer){ clearTimeout(_refreshTimer); _refreshTimer = null; }
-  const delay = Math.max(0, ms);
   _refreshTimer = setTimeout(async ()=>{
     _refreshTimer = null;
-    if(!tokenClient) return;
-    console.info('[Portal] Attempting silent token refresh…');
-    try{
-      tokenClient.requestAccessToken({prompt:'none'});
-    }catch(e){
-      // requestAccessToken threw synchronously (shouldn't happen, but guard it)
-      console.warn('[Portal] requestAccessToken threw synchronously, retrying in 60s', e);
-      scheduleRefresh(60 * 1000);
+    if(!tokenClient || !token) return;
+    console.info('[Portal] Proactive token refresh…');
+    const ok = await silentTokenRefresh();
+    if(ok){
+      scheduleRefresh((3600 - 300) * 1000); // re-schedule for next expiry
+    } else {
+      scheduleRefresh(60 * 1000); // retry in 1 min if failed
     }
-  }, delay);
+  }, Math.max(0, ms));
+}
+
+// Silent token refresh — no popup, resolves true/false
+function silentTokenRefresh(){
+  return new Promise(resolve=>{
+    if(!tokenClient){ resolve(false); return; }
+    const origCb = tokenClient._callback;
+    const origErr = tokenClient._error_callback;
+    const done = (ok)=>{
+      tokenClient._callback = origCb;
+      tokenClient._error_callback = origErr;
+      resolve(ok);
+    };
+    tokenClient._callback = (resp)=>{
+      if(resp.error || !resp.access_token){ done(false); return; }
+      token = resp.access_token;
+      const saved = loadAuth();
+      saveAuth(resp, saved?.user||{});
+      done(true);
+    };
+    tokenClient._error_callback = (e)=>{
+      console.warn('[Portal] Silent refresh error_callback:', e);
+      done(false);
+    };
+    try{ tokenClient.requestAccessToken({prompt:'none'}); }
+    catch(e){ done(false); }
+  });
+}
+
+// Ensure token is fresh before a write — silently refreshes if expiring within 5 min
+async function ensureFreshToken(){
+  const saved = loadAuth();
+  if(saved && saved.expires_at > Date.now() + 5 * 60 * 1000) return true;
+  return await silentTokenRefresh();
 }
 
 // ══════════════════════════════════════════════
@@ -870,8 +901,8 @@ async function onToken(resp){
   saveAuth(resp, u);
   applyUserUI(u);
 
-  // Schedule next refresh ~2 min before this token expires
-  scheduleRefresh((resp.expires_in - 120) * 1000);
+  // Schedule next refresh 5 min before this token expires
+  scheduleRefresh((resp.expires_in - 300) * 1000);
 
   if(!wasSignedIn){
     setStatus('loading','Scanning Drive…');
@@ -1313,7 +1344,15 @@ async function loadDoc(doc){
   }
 }
 
-function gfetch(url){ return fetch(url,{headers:{Authorization:'Bearer '+token}}); }
+async function gfetch(url, opts={}, _retry=false){
+  const resp = await fetch(url,{...opts, headers:{Authorization:'Bearer '+token,...(opts.headers||{})}});
+  if((resp.status===401||resp.status===403) && !_retry){
+    console.warn('[Portal] gfetch got',resp.status,'— attempting silent token refresh then retry');
+    const ok = await silentTokenRefresh();
+    if(ok) return gfetch(url, opts, true);
+  }
+  return resp;
+}
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s); }); }
 
 function docHtml(raw){
@@ -1738,6 +1777,7 @@ async function todoToggleCheckbox(cbEl, startIndex, endIndex){
       }]
     };
 
+    await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1780,6 +1820,7 @@ async function todoSaveEdit(spanEl, startIndex, endIndex){
         }}
       ]
     };
+    await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1813,6 +1854,7 @@ async function todoAddItem(afterIndex, listId, nestLevel){
           bulletPreset: 'CHECKED_ITEMS_WITH_SPACES'
       }}
     ]};
+    await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1836,6 +1878,7 @@ async function todoDeleteItem(startIndex, endIndexExcl){
     const payload = { requests: [
       { deleteContentRange: { range:{ startIndex, endIndex: endIndexExcl } } }
     ]};
+    await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1934,34 +1977,28 @@ doSignOut = function(){
 };
 
 // ── Visibility: silently refresh token on tab resume if near expiry ──
-let _lastPortalRefresh = 0;
-const PORTAL_REFRESH_TTL = 60 * 1000; // background data check at most once per minute
-
-async function backgroundDataCheck(){
-  if(!token) return;
-  if(Date.now() - _lastPortalRefresh < PORTAL_REFRESH_TTL) return;
-  _lastPortalRefresh = Date.now();
-  console.info('[Portal] Background data check on resume…');
-  try{
-    const savedStruct = loadStruct();
-    const structStale = !savedStruct || (Date.now() - savedStruct.savedAt) > STRUCT_TTL;
-    if(structStale){
-      await scanDriveAndBuild();
-    }
-    await backgroundRefreshDocs();
-  }catch(e){
-    console.warn('[Portal] Background data check failed', e);
-  }
-}
-
 document.addEventListener('visibilitychange', async ()=>{
   if(document.visibilityState !== 'visible' || !tokenClient) return;
+  // Always re-read expiry from localStorage — in-memory token may be stale after suspension
   const saved = loadAuth();
-  if(!saved || saved.expires_at <= Date.now() + 30000){
-    // Token expiring — refresh it silently; onToken will call backgroundRefreshDocs
-    if(token) tokenClient.requestAccessToken({prompt:'none'});
-  } else if(token){
-    // Token still valid — just check for new data
+  if(!saved || !token){
+    // Not signed in — nothing to do
+    return;
+  }
+  if(saved.expires_at <= Date.now() + 30000){
+    // Token expired or expiring imminently — refresh silently then kick off data check
+    console.info('[Portal] Tab resumed — token expired, refreshing…');
+    const ok = await silentTokenRefresh();
+    if(ok){
+      _lastPortalRefresh = 0;
+      await backgroundDataCheck();
+    } else {
+      // Refresh failed — user needs to sign in again
+      clearAuth(); token = null; applySignedOutUI();
+    }
+  } else {
+    // Token still valid — update in-memory token from storage and check for new data
+    token = saved.access_token;
     await backgroundDataCheck();
   }
 });
