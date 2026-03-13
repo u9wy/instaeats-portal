@@ -114,7 +114,7 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .stat-label{font-size:12px;color:var(--pale);line-height:1.4;}
 
 /* STATUS LEGEND */
-.status-legend{display:flex;gap:14px;align-items:center;justify-content:center;}
+.status-legend{display:flex;gap:16px;align-items:center;}
 .sleg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--pale);}
 .sleg-dot{width:9px;height:9px;border-radius:50%;}
 
@@ -123,10 +123,9 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
   display:flex;align-items:center;justify-content:space-between;
   opacity:0;animation:fadeUp .8s forwards .55s;}
 .section-intro-text{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);}
-.legend-group{display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:260px;}
-.track-legend{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:flex-end;}
+.track-legend{display:flex;gap:20px;}
 .tleg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--pale);}
-.tleg-bar{width:24px;height:3px;border-radius:2px;flex-shrink:0;}
+.tleg-bar{width:24px;height:3px;border-radius:2px;}
 
 /* ROADMAP */
 .roadmap{position:relative;z-index:10;padding:60px 0 100px;}
@@ -469,17 +468,15 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
 
 <div class="section-intro">
   <div class="section-intro-text">— Roadmap Phases</div>
-  <div class="legend-group">
-    <div class="track-legend" id="trackLegend">
-      <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
-      <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
-      <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
-    </div>
-    <div class="status-legend">
-      <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
-      <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
-      <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
-    </div>
+  <div class="track-legend" id="trackLegend">
+    <div class="tleg"><div class="tleg-bar" style="background:var(--eng)"></div>Engineering</div>
+    <div class="tleg"><div class="tleg-bar" style="background:var(--coral)"></div>Business Dev</div>
+    <div class="tleg"><div class="tleg-bar" style="background:var(--doc)"></div>Documentation</div>
+  </div>
+  <div class="status-legend" style="margin-top:12px;">
+    <div class="sleg"><div class="sleg-dot" style="background:var(--status-done)"></div>Done</div>
+    <div class="sleg"><div class="sleg-dot" style="background:var(--status-inprogress)"></div>In Progress</div>
+    <div class="sleg"><div class="sleg-dot" style="background:var(--status-todo)"></div>Todo</div>
   </div>
 </div>
 
@@ -635,29 +632,46 @@ function gfetch(url,opts={}){ return fetch(url,{...opts,headers:{Authorization:'
 let _refreshTimer = null;
 function scheduleRefresh(ms){
   if(_refreshTimer){ clearTimeout(_refreshTimer); _refreshTimer = null; }
-  _refreshTimer = setTimeout(()=>{
+  _refreshTimer = setTimeout(async ()=>{
     _refreshTimer = null;
     if(!tokenClient || !token) return;
-    tokenClient.requestAccessToken({prompt:'none'});
+    const ok = await silentTokenRefresh();
+    if(ok){
+      // Schedule next refresh ~2 min before next expiry (tokens last 3600s)
+      scheduleRefresh((3600 - 120) * 1000);
+    }
   }, Math.max(0, ms));
 }
 
-function tryRefreshToken(){
+// Silent token refresh — no popup, resolves true/false
+function silentTokenRefresh(){
   return new Promise(resolve=>{
     if(!tokenClient){ resolve(false); return; }
-    const prev = token;
     const origCb = tokenClient._callback;
-    tokenClient._callback = (resp)=>{
+    const origErr = tokenClient._error_callback;
+    const done = (ok)=>{
       tokenClient._callback = origCb;
-      if(resp.error||!resp.access_token){ resolve(false); return; }
+      tokenClient._error_callback = origErr;
+      resolve(ok);
+    };
+    tokenClient._callback = (resp)=>{
+      if(resp.error || !resp.access_token){ done(false); return; }
       token = resp.access_token;
       const saved = loadAuth();
       saveAuthLocal(resp, saved?.user||{});
-      resolve(true);
+      done(true);
     };
-    try{ tokenClient.requestAccessToken({prompt:''}); }
-    catch(e){ tokenClient._callback = origCb; resolve(false); }
+    tokenClient._error_callback = ()=>{ done(false); };
+    try{ tokenClient.requestAccessToken({prompt:'none'}); }
+    catch(e){ done(false); }
   });
+}
+
+// Ensure the token is fresh before a write — refreshes silently if expiring within 5 min
+async function ensureFreshToken(){
+  const saved = loadAuth();
+  if(!saved || saved.expires_at > Date.now() + 5 * 60 * 1000) return true; // still good
+  return await silentTokenRefresh();
 }
 
 function showLoginOverlay(){ document.getElementById('loginOverlay').classList.add('visible'); }
@@ -703,12 +717,20 @@ function initTokenClient(){
         console.warn('[Roadmap] Token callback error:', resp.error);
         return;
       }
+      const wasSignedIn = !!token;
       token = resp.access_token;
       const saved = loadAuth();
       const u = saved?.user || await gfetch('https://www.googleapis.com/oauth2/v3/userinfo').then(r=>r.json()).catch(()=>null);
       if(u) saveAuthLocal(resp, u);
-      hideLoginOverlay();
-      await initSheet();
+      // Schedule proactive token refresh ~55 min from now (tokens last 60 min)
+      scheduleRefresh((resp.expires_in ? resp.expires_in - 300 : 3300) * 1000);
+      if(!wasSignedIn){
+        hideLoginOverlay();
+        await initSheet();
+      } else {
+        _lastDataFetch = 0;
+        await backgroundRefreshData();
+      }
     },
     error_callback:(e)=>{
       _signInInProgress = false;
@@ -917,11 +939,26 @@ function schedSave(){
 
 async function doSave(){
   try{
+    // Proactively refresh token if it's expiring soon
+    await ensureFreshToken();
     const ok = await writeSheetData(roadmapData);
-    if(ok) showSaveIndicator('saved');
-    else showSaveError();
+    if(ok){ showSaveIndicator('saved'); return; }
+    // Non-ok but no exception — surface as error
+    showSaveError();
   }catch(e){
-    if(e.status===401||e.status===403){ showLoginOverlay(); return; }
+    if(e.status===401||e.status===403){
+      // Token expired mid-session — try a silent refresh then retry once
+      const refreshed = await silentTokenRefresh();
+      if(refreshed){
+        try{
+          const ok = await writeSheetData(roadmapData);
+          if(ok){ showSaveIndicator('saved'); return; }
+        }catch(e2){}
+      }
+      // Refresh failed or retry failed — fall through to error
+      showSaveError();
+      return;
+    }
     showSaveError();
   }
 }
