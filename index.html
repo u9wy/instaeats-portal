@@ -1905,8 +1905,13 @@ async function todoDeleteItem(startIndex, endIndexExcl){
   if(!confirm('Delete this item?')) return;
   setSaveIndicator('saving','Deleting…');
   try{
+    // The API forbids deleting the final newline at the segment boundary.
+    // For the last item, clamp the end so we delete the content but not that newline.
+    const safeEnd = (todoDocBodyEndIndex > 0 && endIndexExcl >= todoDocBodyEndIndex)
+      ? todoDocBodyEndIndex - 1
+      : endIndexExcl;
     const payload = { requests: [
-      { deleteContentRange: { range:{ startIndex, endIndex: endIndexExcl } } }
+      { deleteContentRange: { range:{ startIndex, endIndex: safeEnd } } }
     ]};
     await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
@@ -1961,12 +1966,64 @@ async function todoChangeIndent(startIndex, endIndex, nestLevel, delta){
 function todoItemKeydown(e, spanEl, startIndex, endIndex, endIndexExcl, listId, nestLevel){
   if(e.key === 'Enter'){
     e.preventDefault();
+    const newText  = spanEl.textContent || '';
+    const origText = spanEl.dataset.origText;
+    // Neutralise the onblur handler so it doesn't fire a competing API call.
+    spanEl.dataset.origText = newText;
     spanEl.blur();
-    setTimeout(()=>todoAddItem(endIndexExcl, listId, nestLevel), 100);
+    todoSaveAndAddItem(newText, origText, startIndex, endIndex, endIndexExcl, listId, nestLevel);
   } else if(e.key === 'Backspace' && spanEl.textContent === ''){
     e.preventDefault();
     spanEl.blur();
     todoDeleteItem(startIndex, endIndexExcl);
+  }
+}
+
+async function todoSaveAndAddItem(newText, origText, startIndex, endIndex, endIndexExcl, listId, nestLevel){
+  if(!token || !todoDocId) return;
+  setSaveIndicator('saving','Saving…');
+  try{
+    const textChanged = origText !== undefined && newText !== origText;
+    const requests = [];
+
+    if(textChanged){
+      // Delete old text content (range end is exclusive, so the \n is preserved).
+      if(origText.length > 0){
+        requests.push({ deleteContentRange: { range:{ startIndex, endIndex } } });
+      }
+      requests.push({ insertText: { location:{ index: startIndex }, text: newText } });
+    }
+
+    // After the text replacement the \n shifts by the difference in text length,
+    // so recalculate where the new item should be inserted.
+    const lenDelta  = textChanged ? newText.length - (origText || '').length : 0;
+    const insertAfter = endIndexExcl + lenDelta;
+
+    // Adjust for the doc boundary (which also shifts by lenDelta after the save).
+    const newDocEnd = todoDocBodyEndIndex + lenDelta;
+    const insertAt  = (newDocEnd > 0 && insertAfter >= newDocEnd)
+      ? newDocEnd - 1
+      : insertAfter;
+
+    requests.push({ insertText: { location:{ index: insertAt }, text: '\n' } });
+    requests.push({ createParagraphBullets: {
+      range: { startIndex: insertAt + 1, endIndex: insertAt + 2 },
+      bulletPreset: 'BULLET_CHECKBOX'
+    }});
+
+    await ensureFreshToken();
+    const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ requests })
+    });
+    if(!resp.ok){ const err=await resp.json().catch(()=>{}); throw new Error(err?.error?.message||`HTTP ${resp.status}`); }
+    setSaveIndicator('saved','✓ Saved');
+    setTimeout(()=>{ setSaveIndicator('',''); loadTodoPanelDoc(false); }, 600);
+  }catch(e){
+    console.error('Save+add failed',e);
+    setSaveIndicator('err','✗ Failed: '+e.message);
+    setTimeout(()=>setSaveIndicator('',''),3000);
   }
 }
 
