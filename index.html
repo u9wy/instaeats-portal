@@ -1782,19 +1782,16 @@ async function todoToggleCheckbox(cbEl, startIndex, endIndex){
   setSaveIndicator('saving', 'Saving…');
 
   try{
-    const requests = [
-      {
-        updateParagraphStyle: {
-          range: { startIndex, endIndex: endIndex + 1 },
-          paragraphStyle: { checked: checked },
-          fields: 'checked'
-        }
-      }
-    ];
+    // paragraphStyle.checked is not writable via the REST API — attempting to set it
+    // causes the entire batchUpdate to fail with "Cannot find field", which is what
+    // was making the checkbox bounce back immediately.
+    // We rely solely on strikethrough to represent checked state, which is also what
+    // Google Docs does visually. pStyle.checked is still read on render (set by the
+    // native Docs UI), so items checked directly in Google Docs still show correctly.
+    const requests = [];
 
     // Only add updateTextStyle when there is actual text content.
-    // If startIndex === endIndex the range is zero-length and the API rejects the
-    // entire batchUpdate, causing the catch block to immediately flip the checkbox back.
+    // A zero-length range (startIndex === endIndex) is rejected by the API.
     if(startIndex < endIndex){
       requests.push({
         updateTextStyle: {
@@ -1803,6 +1800,14 @@ async function todoToggleCheckbox(cbEl, startIndex, endIndex){
           fields: 'strikethrough'
         }
       });
+    }
+
+    // Nothing to send for empty items — just update the UI locally and return.
+    if(!requests.length){
+      setSaveIndicator('saved', '✓ Saved');
+      setTimeout(() => setSaveIndicator('', ''), 2000);
+      cbEl.classList.remove('saving');
+      return;
     }
 
     await ensureFreshToken();
