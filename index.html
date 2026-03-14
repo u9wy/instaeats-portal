@@ -730,9 +730,9 @@ function scheduleRefresh(ms){
     console.info('[Portal] Proactive token refresh…');
     const ok = await silentTokenRefresh();
     if(ok){
-      scheduleRefresh((3600 - 300) * 1000); // re-schedule for next expiry
+      scheduleRefresh((3600 - 300) * 1000);
     } else {
-      scheduleRefresh(60 * 1000); // retry in 1 min if failed
+      scheduleRefresh(60 * 1000);
     }
   }, Math.max(0, ms));
 }
@@ -797,10 +797,9 @@ function gsiReady(){
         clearAuth();
         applySignedOutUI();
       } else {
-        // We still have a valid token but the refresh attempt failed
-        // (e.g. brief network blip). Retry in 90 seconds instead of giving up.
-        console.warn('[Portal] Silent refresh error_callback with live token — retrying in 90s');
-        scheduleRefresh(90 * 1000);
+        // We still have a valid token — the error_callback fired from a background
+        // silent refresh attempt. The scheduleRefresh timer will retry automatically.
+        console.warn('[Portal] Silent refresh error_callback with live token — timer will retry');
       }
     }
   });
@@ -825,8 +824,8 @@ function gsiReady(){
         hideBuildOverlay();
         backgroundRefreshDocs();
       }
-      // Schedule refresh for ~2 min before expiry
-      scheduleRefresh(savedAuth.expires_at - Date.now() - 120000);
+      // Schedule refresh for ~5 min before expiry
+      scheduleRefresh(savedAuth.expires_at - Date.now() - 300000);
       setStatus('ok', savedStruct ? 'Signed in — refreshing…' : 'Signed in — loading…');
     } else {
       // Token already expired — show sign-in
@@ -1976,28 +1975,24 @@ doSignOut = function(){
   setTodoDot('');
 };
 
-// ── Visibility: silently refresh token on tab resume if near expiry ──
+// ── Visibility: silently refresh token on tab resume ──
 document.addEventListener('visibilitychange', async ()=>{
   if(document.visibilityState !== 'visible' || !tokenClient) return;
   // Always re-read expiry from localStorage — in-memory token may be stale after suspension
   const saved = loadAuth();
-  if(!saved || !token){
-    // Not signed in — nothing to do
-    return;
-  }
+  if(!saved || !token) return; // not signed in
   if(saved.expires_at <= Date.now() + 30000){
-    // Token expired or expiring imminently — refresh silently then kick off data check
+    // Token expired or expiring imminently — refresh silently
     console.info('[Portal] Tab resumed — token expired, refreshing…');
     const ok = await silentTokenRefresh();
     if(ok){
       _lastPortalRefresh = 0;
       await backgroundDataCheck();
     } else {
-      // Refresh failed — user needs to sign in again
       clearAuth(); token = null; applySignedOutUI();
     }
   } else {
-    // Token still valid — update in-memory token from storage and check for new data
+    // Token still valid — sync in-memory token from storage and check for new data
     token = saved.access_token;
     await backgroundDataCheck();
   }
