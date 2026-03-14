@@ -1298,6 +1298,40 @@ function applyCardData(key,data){
   }
 }
 
+// Download a PDF via bearer token, create a session-scoped blob URL, and populate cache snip/desc.
+async function loadPdfBinary(doc){
+  const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`);
+  if(!r.ok) throw new Error(`PDF fetch HTTP ${r.status}`);
+  const buf = await r.arrayBuffer();
+  // Revoke any previous blob URL for this doc to free memory
+  if(pdfBlobUrls[doc.key]) URL.revokeObjectURL(pdfBlobUrls[doc.key]);
+  pdfBlobUrls[doc.key] = URL.createObjectURL(new Blob([buf], {type:'application/pdf'}));
+  // Build a text snip from the raw bytes (look for readable ASCII runs — cheap, no lib needed)
+  let snip = '';
+  try{
+    const view = new Uint8Array(buf, 0, Math.min(buf.byteLength, 32768));
+    let run = '', best = '';
+    for(let i=0; i<view.length; i++){
+      const c = view[i];
+      if(c>=32 && c<127){ run += String.fromCharCode(c); }
+      else {
+        if(run.length > best.length && /[a-zA-Z]{4,}/.test(run)) best = run;
+        run = '';
+      }
+    }
+    if(run.length > best.length && /[a-zA-Z]{4,}/.test(run)) best = run;
+    snip = best.replace(/\s+/g,' ').replace(/[^\x20-\x7E]/g,'').trim().substring(0, 320);
+  }catch(e){}
+  if(!snip){
+    // Fallback: just show size
+    const kb = Math.round(buf.byteLength/1024);
+    snip = `PDF · ${kb > 1024 ? (kb/1024).toFixed(1)+' MB' : kb+' KB'}`;
+  }
+  const fs = snip.match(/[A-Z][^.!?]{15,}[.!?]/);
+  const desc = fs ? fs[0].trim().substring(0,155) : snip.substring(0,120) || 'PDF Document';
+  cache[doc.key] = {snip, desc, ok:true};
+}
+
 async function loadDoc(doc){
   const th=document.getElementById('throb-'+doc.key);
   if(th) th.classList.add('on');
@@ -1329,6 +1363,10 @@ async function loadDoc(doc){
         const fs=txt.match(/[A-Z][^.!?]{15,}[.!?]/);
         desc=fs?fs[0].trim().substring(0,155):txt.substring(0,120);
         content=docHtml(result.value);
+      } else if(mime==='application/pdf'){
+        // Old struct cache classified this as 'doc' — route to PDF binary loader
+        await loadPdfBinary(doc);
+        return; // cache already set by loadPdfBinary
       } else {
         // Generic Google Workspace file — try plain-text export
         const txtR=await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}/export?mimeType=text/plain`);
@@ -1339,15 +1377,7 @@ async function loadDoc(doc){
       cache[doc.key]={snip,desc,content,ok:true};
 
     } else if(doc.type==='pdf'){
-      // PDFs: fetch metadata for the card description, preview via Drive iframe
-      const metaR=await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?fields=name,size,description`);
-      const meta=await metaR.json();
-      const sizeBytes=parseInt(meta.size||0);
-      const sizeLabel=sizeBytes>1048576?`${(sizeBytes/1048576).toFixed(1)} MB`:sizeBytes>1024?`${Math.round(sizeBytes/1024)} KB`:'< 1 KB';
-      const snip=meta.description||`PDF · ${sizeLabel}`;
-      const desc=`PDF document · ${sizeLabel}`;
-      const content=`<div class="dvc pdf-embed"><iframe src="https://drive.google.com/file/d/${doc.id}/preview" style="width:100%;height:100%;border:none;" allow="autoplay" title="${escHtml(meta.name||doc.title)}"></iframe></div>`;
-      cache[doc.key]={snip,desc,content,ok:true};
+      await loadPdfBinary(doc);
 
     } else if(doc.type==='sheet'){
       const [metaR,valR]=await Promise.all([
@@ -1423,7 +1453,24 @@ function renderModal(key){
     return;
   }
   if(doc.type==='pdf'){
-    mb.innerHTML=`<div class="dvc pdf-embed"><iframe src="https://drive.google.com/file/d/${doc.id}/preview" style="width:100%;height:100%;border:none;" allow="autoplay" title="${escHtml(doc.title)}"></iframe></div>`;
+    if(!token){
+      mb.innerHTML=`<div class="no-auth"><h3>🔐 Sign in to preview</h3><p>Click "Sign in with Google" to load this document.</p><button onclick="doSignIn()">Sign in with Google</button></div>`;
+      return;
+    }
+    // Use cached blob URL from this session if already downloaded
+    if(pdfBlobUrls[key]){
+      mb.innerHTML=`<div class="dvc pdf-embed"><iframe src="${pdfBlobUrls[key]}" style="width:100%;height:100%;border:none;" title="${escHtml(doc.title)}"></iframe></div>`;
+      return;
+    }
+    // Download the PDF with the bearer token and display as a local blob URL
+    mb.innerHTML=`<div class="dvc pdf-embed" style="align-items:center;justify-content:center;"><div class="dv-spin"><div class="spin"></div><p>Loading PDF…</p></div></div>`;
+    loadPdfBinary(doc).then(()=>{
+      if(openKey!==key) return;
+      mb.innerHTML=`<div class="dvc pdf-embed"><iframe src="${pdfBlobUrls[key]}" style="width:100%;height:100%;border:none;" title="${escHtml(doc.title)}"></iframe></div>`;
+    }).catch(()=>{
+      if(openKey!==key) return;
+      mb.innerHTML=`<div class="dv"><div class="dv-err"><div style="font-size:36px">⚠️</div><p>Could not load PDF.<br><a href="${doc.url}" target="_blank">Open in Drive →</a></p></div></div>`;
+    });
     return;
   }
   if(cache[key]?.ok&&cache[key]?.content){
@@ -1455,6 +1502,9 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 // ══════════════════════════════════════════════
 //  TODO SIDE PANEL
 // ══════════════════════════════════════════════
+
+// PDF blob URLs — session-only, keyed by doc.key. Never stored in localStorage.
+const pdfBlobUrls = {};
 
 let todoDocId            = null;
 let todoDocRev           = null;
