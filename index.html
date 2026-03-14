@@ -1629,6 +1629,8 @@ function renderTodoPanelContent(doc){
     let innerHtml = '';
     let paraWho = 'none';
     let allText = '';
+    let allStrikethrough = true;
+    let hasRuns = false;
 
     const runs = para.elements || [];
     for(const run of runs){
@@ -1637,8 +1639,10 @@ function renderTodoPanelContent(doc){
       const textContent = rawContent.replace(/\n$/, '');
       if(!textContent) continue;
       allText += textContent;
+      hasRuns = true;
 
       const ts = run.textRun.textStyle || {};
+      if(!ts.strikethrough) allStrikethrough = false;
 
       const bgRgb = ts.backgroundColor?.color?.rgbColor;
       const who = rgbToWho(bgRgb);
@@ -1689,7 +1693,7 @@ function renderTodoPanelContent(doc){
       const listId = bullet.listId;
       const listDef = lists[listId];
       const nestLevel = bullet.nestingLevel || 0;
-      const isChecked = !!pStyle.checked;
+      const isChecked = !!pStyle.checked || (hasRuns && allStrikethrough);
 
       const whoClass = paraWho !== 'none' ? ` ${paraWho}-bg` : '';
       const textClass = isChecked ? 'todo-text checked-text' : 'todo-text';
@@ -1711,6 +1715,8 @@ function renderTodoPanelContent(doc){
             innerHtml +
           `</span>` +
           `<span class="todo-item-actions">` +
+            `<button class="todo-action-btn" title="Decrease indent" onclick="todoChangeIndent(${startIndex},${endIndex},${nestLevel},-1)">&#8249;</button>` +
+            `<button class="todo-action-btn" title="Increase indent" onclick="todoChangeIndent(${startIndex},${endIndex},${nestLevel},1)">&#8250;</button>` +
             `<button class="todo-action-btn" title="Add item below" onclick="todoAddItem(${endIndex+1},'${listId}',${nestLevel})">+</button>` +
             `<button class="todo-action-btn del" title="Delete this item" onclick="todoDeleteItem(${startIndex},${endIndex+1})">×</button>` +
           `</span>` +
@@ -1759,13 +1765,22 @@ async function todoToggleCheckbox(cbEl, startIndex, endIndex){
 
   try{
     const payload = {
-      requests: [{
-        updateParagraphStyle: {
-          range: { startIndex, endIndex: endIndex + 1 },
-          paragraphStyle: { checked: checked },
-          fields: 'checked'
+      requests: [
+        {
+          updateParagraphStyle: {
+            range: { startIndex, endIndex: endIndex + 1 },
+            paragraphStyle: { checked: checked },
+            fields: 'checked'
+          }
+        },
+        {
+          updateTextStyle: {
+            range: { startIndex, endIndex },
+            textStyle: { strikethrough: checked },
+            fields: 'strikethrough'
+          }
         }
-      }]
+      ]
     };
 
     await ensureFreshToken();
@@ -1842,7 +1857,7 @@ async function todoAddItem(afterIndex, listId, nestLevel){
       { insertText: { location:{ index: afterIndex }, text: '\n' } },
       { createParagraphBullets: {
           range: { startIndex: afterIndex + 1, endIndex: afterIndex + 2 },
-          bulletPreset: 'CHECKED_ITEMS_WITH_SPACES'
+          bulletPreset: 'BULLET_CHECKBOX'
       }}
     ]};
     await ensureFreshToken();
@@ -1880,6 +1895,38 @@ async function todoDeleteItem(startIndex, endIndexExcl){
     setTimeout(()=>{ setSaveIndicator('',''); loadTodoPanelDoc(false); }, 600);
   }catch(e){
     console.error('Delete item failed',e);
+    setSaveIndicator('err','✗ Failed: '+e.message);
+    setTimeout(()=>setSaveIndicator('',''),3000);
+  }
+}
+
+async function todoChangeIndent(startIndex, endIndex, nestLevel, delta){
+  if(!token || !todoDocId) return;
+  const newLevel = Math.max(0, Math.min(5, nestLevel + delta));
+  if(newLevel === nestLevel) return;
+  setSaveIndicator('saving','Saving…');
+  try{
+    const payload = { requests: [{
+      updateParagraphStyle: {
+        range: { startIndex, endIndex: endIndex + 1 },
+        paragraphStyle: {
+          indentStart: { magnitude: newLevel * 36, unit: 'PT' },
+          indentFirstLine: { magnitude: 0, unit: 'PT' }
+        },
+        fields: 'indentStart,indentFirstLine'
+      }
+    }]};
+    await ensureFreshToken();
+    const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!resp.ok){ const e=await resp.json().catch(()=>{}); throw new Error(e?.error?.message||`HTTP ${resp.status}`); }
+    setSaveIndicator('saved','✓ Saved');
+    setTimeout(()=>{ setSaveIndicator('',''); loadTodoPanelDoc(false); }, 600);
+  }catch(e){
+    console.error('Indent change failed',e);
     setSaveIndicator('err','✗ Failed: '+e.message);
     setTimeout(()=>setSaveIndicator('',''),3000);
   }
