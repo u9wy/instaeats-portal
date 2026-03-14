@@ -1050,6 +1050,7 @@ async function scanDriveAndBuild(){
 
     saveStruct(sections);
     buildPortalFromStructure(sections, false);
+    restoreDocCache();
     renderRecentlyEdited(sections);
 
     return sections;
@@ -1095,7 +1096,7 @@ function buildPortalFromStructure(sections, fromCache){
     const grid = section.querySelector('#'+gridId);
     sec.docs.forEach(doc=>{
       allDocs.push(doc);
-      grid.innerHTML += buildCardHtml(doc);
+      grid.insertAdjacentHTML('beforeend', buildCardHtml(doc));
       if(fromCache){
         const cached = loadDocCache(doc.key);
         if(cached && cached.ok){ cache[doc.key]=cached; applyCardData(doc.key,cached); }
