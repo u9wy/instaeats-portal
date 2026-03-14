@@ -379,8 +379,8 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 .todo-text.checked-text{text-decoration:line-through;opacity:.5;}
 /* action buttons — sit above the checkbox+text row, hidden until hover */
 .todo-item-actions{
-  display:flex;align-items:center;gap:2px;
-  height:0;overflow:hidden;opacity:0;
+  display:flex;align-items:center;justify-content:flex-end;gap:2px;
+  width:100%;height:0;overflow:hidden;opacity:0;
   transition:opacity .15s,height .15s;
 }
 .todo-item:hover .todo-item-actions{ height:20px;opacity:1; }
