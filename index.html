@@ -343,6 +343,7 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 }
 .todo-section-hd:first-child{margin-top:4px;}
 .todo-item{
+  position:relative;
   display:flex;align-items:flex-start;gap:8px;
   padding:5px 8px;border-radius:6px;
   margin-bottom:2px;transition:background .15s;
@@ -373,10 +374,13 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 .todo-text a{ color:var(--coral);text-decoration:underline;cursor:pointer; }
 .todo-text a:hover{ opacity:.8; }
 .todo-text.checked-text{text-decoration:line-through;opacity:.5;}
-/* action buttons shown on hover */
+/* action buttons shown on hover — float above the item, don't affect text width */
 .todo-item-actions{
+  position:absolute;top:3px;right:4px;
   display:flex;align-items:center;gap:2px;
-  opacity:0;transition:opacity .15s;flex-shrink:0;margin-top:1px;
+  opacity:0;transition:opacity .15s;
+  background:rgba(14,5,9,.95);border-radius:4px;padding:1px 2px;
+  z-index:5;
 }
 .todo-item:hover .todo-item-actions{ opacity:1; }
 .todo-action-btn{
@@ -1693,31 +1697,35 @@ function renderTodoPanelContent(doc){
       const listId = bullet.listId;
       const listDef = lists[listId];
       const nestLevel = bullet.nestingLevel || 0;
+      // indentLevel (from pStyle.indentStart) is what our API writes; use it as the
+      // display level so the panel reflects changes immediately after reload.
+      // Fall back to nestingLevel for items that have never been touched via the API.
+      const displayLevel = indentLevel > 0 ? indentLevel : nestLevel;
       const isChecked = !!pStyle.checked || (hasRuns && allStrikethrough);
 
       const whoClass = paraWho !== 'none' ? ` ${paraWho}-bg` : '';
       const textClass = isChecked ? 'todo-text checked-text' : 'todo-text';
 
-      const nestIndent = nestLevel * 16;
+      const nestIndent = displayLevel * 18;
       const nestStyle = nestIndent ? ` style="margin-left:${nestIndent}px"` : '';
 
       const startIndex = el.startIndex || 0;
       const endIndex   = (el.endIndex || 1) - 1;
 
       frags.push(
-        `<div class="todo-item${whoClass}" data-start="${startIndex}" data-end="${endIndex}" data-list="${listId}" data-nest="${nestLevel}"${nestStyle}>` +
+        `<div class="todo-item${whoClass}" data-start="${startIndex}" data-end="${endIndex}" data-list="${listId}" data-nest="${displayLevel}"${nestStyle}>` +
           `<input type="checkbox" class="todo-cb" ${isChecked?'checked':''} ` +
             `onchange="todoToggleCheckbox(this,${startIndex},${endIndex})">` +
           `<span class="${textClass}" contenteditable="true" spellcheck="false" ` +
             `onfocus="this.dataset.origText=this.textContent" ` +
             `onblur="todoSaveEdit(this,${startIndex},${endIndex})" ` +
-            `onkeydown="todoItemKeydown(event,this,${startIndex},${endIndex},${endIndex+1},'${listId}',${nestLevel})">`+
+            `onkeydown="todoItemKeydown(event,this,${startIndex},${endIndex},${endIndex+1},'${listId}',${displayLevel})">`+
             innerHtml +
           `</span>` +
           `<span class="todo-item-actions">` +
-            `<button class="todo-action-btn" title="Decrease indent" onclick="todoChangeIndent(${startIndex},${endIndex},${nestLevel},-1)">&#8249;</button>` +
-            `<button class="todo-action-btn" title="Increase indent" onclick="todoChangeIndent(${startIndex},${endIndex},${nestLevel},1)">&#8250;</button>` +
-            `<button class="todo-action-btn" title="Add item below" onclick="todoAddItem(${endIndex+1},'${listId}',${nestLevel})">+</button>` +
+            `<button class="todo-action-btn" title="Decrease indent" onclick="todoChangeIndent(${startIndex},${endIndex},${displayLevel},-1)">&#8249;</button>` +
+            `<button class="todo-action-btn" title="Increase indent" onclick="todoChangeIndent(${startIndex},${endIndex},${displayLevel},1)">&#8250;</button>` +
+            `<button class="todo-action-btn" title="Add item below" onclick="todoAddItem(${endIndex+1},'${listId}',${displayLevel})">+</button>` +
             `<button class="todo-action-btn del" title="Delete this item" onclick="todoDeleteItem(${startIndex},${endIndex+1})">×</button>` +
           `</span>` +
         `</div>`
