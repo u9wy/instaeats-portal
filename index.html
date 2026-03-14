@@ -343,11 +343,14 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 }
 .todo-section-hd:first-child{margin-top:4px;}
 .todo-item{
-  position:relative;
-  display:flex;align-items:flex-start;gap:8px;
-  padding:5px 8px;border-radius:6px;
+  display:flex;flex-direction:column;
+  padding:4px 8px;border-radius:6px;
   margin-bottom:2px;transition:background .15s;
   cursor:default;
+}
+.todo-item-body{
+  display:flex;align-items:flex-start;gap:8px;
+  width:100%;
 }
 .todo-item:hover{background:rgba(232,121,106,.06);}
 .todo-item.rich-bg  {background:rgba(173,216,230,.18);}
@@ -374,15 +377,13 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 .todo-text a{ color:var(--coral);text-decoration:underline;cursor:pointer; }
 .todo-text a:hover{ opacity:.8; }
 .todo-text.checked-text{text-decoration:line-through;opacity:.5;}
-/* action buttons shown on hover — float above the item, don't affect text width */
+/* action buttons — sit above the checkbox+text row, hidden until hover */
 .todo-item-actions{
-  position:absolute;top:3px;right:4px;
   display:flex;align-items:center;gap:2px;
-  opacity:0;transition:opacity .15s;
-  background:rgba(14,5,9,.95);border-radius:4px;padding:1px 2px;
-  z-index:5;
+  height:0;overflow:hidden;opacity:0;
+  transition:opacity .15s,height .15s;
 }
-.todo-item:hover .todo-item-actions{ opacity:1; }
+.todo-item:hover .todo-item-actions{ height:20px;opacity:1; }
 .todo-action-btn{
   width:18px;height:18px;border-radius:4px;border:none;
   background:transparent;color:var(--dim);cursor:pointer;
@@ -1422,14 +1423,15 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 //  TODO SIDE PANEL
 // ══════════════════════════════════════════════
 
-let todoDocId       = null;
-let todoDocRev      = null;
-let todoPollTimer   = null;
-let todoPanelOpen   = false;
-let todoResizing    = false;
-let todoResizeStartX= 0;
-let todoResizeStartW= 0;
-const TODO_POLL_MS  = 25000;
+let todoDocId            = null;
+let todoDocRev           = null;
+let todoPollTimer        = null;
+let todoPanelOpen        = false;
+let todoResizing         = false;
+let todoResizeStartX     = 0;
+let todoResizeStartW     = 0;
+let todoDocBodyEndIndex  = 0;   // tracked so we never insertText at the doc boundary
+const TODO_POLL_MS       = 25000;
 const TODO_DEFAULT_W= 340;
 
 function saveTodoPanelWidth(w){ try{ localStorage.setItem('ie_todo_w', w); }catch(e){} }
@@ -1615,6 +1617,10 @@ function renderTodoPanelContent(doc){
   const bodyContent = doc.body?.content;
   if(!bodyContent){ setTodoPanelBody('<div class="tpanel-notfound"><p>Empty document.</p></div>'); return; }
 
+  // Keep track of the document's last valid index so todoAddItem never tries to
+  // insertText at the segment boundary (which the API rejects).
+  todoDocBodyEndIndex = bodyContent.reduce((max, el) => Math.max(max, el.endIndex || 0), 0);
+
   const lists = doc.lists || {};
   const frags = [];
 
@@ -1714,20 +1720,22 @@ function renderTodoPanelContent(doc){
 
       frags.push(
         `<div class="todo-item${whoClass}" data-start="${startIndex}" data-end="${endIndex}" data-list="${listId}" data-nest="${displayLevel}"${nestStyle}>` +
-          `<input type="checkbox" class="todo-cb" ${isChecked?'checked':''} ` +
-            `onchange="todoToggleCheckbox(this,${startIndex},${endIndex})">` +
-          `<span class="${textClass}" contenteditable="true" spellcheck="false" ` +
-            `onfocus="this.dataset.origText=this.textContent" ` +
-            `onblur="todoSaveEdit(this,${startIndex},${endIndex})" ` +
-            `onkeydown="todoItemKeydown(event,this,${startIndex},${endIndex},${endIndex+1},'${listId}',${displayLevel})">`+
-            innerHtml +
-          `</span>` +
           `<span class="todo-item-actions">` +
             `<button class="todo-action-btn" title="Decrease indent" onclick="todoChangeIndent(${startIndex},${endIndex},${displayLevel},-1)">&#8249;</button>` +
             `<button class="todo-action-btn" title="Increase indent" onclick="todoChangeIndent(${startIndex},${endIndex},${displayLevel},1)">&#8250;</button>` +
             `<button class="todo-action-btn" title="Add item below" onclick="todoAddItem(${endIndex+1},'${listId}',${displayLevel})">+</button>` +
             `<button class="todo-action-btn del" title="Delete this item" onclick="todoDeleteItem(${startIndex},${endIndex+1})">×</button>` +
           `</span>` +
+          `<div class="todo-item-body">` +
+            `<input type="checkbox" class="todo-cb" ${isChecked?'checked':''} ` +
+              `onchange="todoToggleCheckbox(this,${startIndex},${endIndex})">` +
+            `<span class="${textClass}" contenteditable="true" spellcheck="false" ` +
+              `onfocus="this.dataset.origText=this.textContent" ` +
+              `onblur="todoSaveEdit(this,${startIndex},${endIndex})" ` +
+              `onkeydown="todoItemKeydown(event,this,${startIndex},${endIndex},${endIndex+1},'${listId}',${displayLevel})">`+
+              innerHtml +
+            `</span>` +
+          `</div>` +
         `</div>`
       );
       continue;
@@ -1861,10 +1869,16 @@ async function todoAddItem(afterIndex, listId, nestLevel){
   if(!token || !todoDocId) return;
   setSaveIndicator('saving', 'Saving…');
   try{
+    // The Google Docs API rejects insertText at the segment's end index.
+    // When afterIndex equals the body end, step back one so the insert lands
+    // just before the document's trailing newline instead.
+    const insertAt = (todoDocBodyEndIndex > 0 && afterIndex >= todoDocBodyEndIndex)
+      ? todoDocBodyEndIndex - 1
+      : afterIndex;
     const payload = { requests: [
-      { insertText: { location:{ index: afterIndex }, text: '\n' } },
+      { insertText: { location:{ index: insertAt }, text: '\n' } },
       { createParagraphBullets: {
-          range: { startIndex: afterIndex + 1, endIndex: afterIndex + 2 },
+          range: { startIndex: insertAt + 1, endIndex: insertAt + 2 },
           bulletPreset: 'BULLET_CHECKBOX'
       }}
     ]};
