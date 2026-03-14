@@ -194,6 +194,7 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .dv::-webkit-scrollbar{width:4px;}
 .dv::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 .dvc{max-width:700px;margin:0 auto;}
+.dvc.pdf-embed{max-width:none;margin:0;width:100%;height:100%;display:flex;flex-direction:column;}
 .dvc h1,.dvc h2,.dvc h3{font-family:'Playfair Display',serif;color:var(--cream);margin:28px 0 12px;line-height:1.2;}
 .dvc h1{font-size:28px;} .dvc h2{font-size:20px;color:var(--coral2);} .dvc h3{font-size:15px;color:var(--pale);}
 .dvc p{font-size:13px;color:rgba(245,232,228,.75);line-height:1.85;margin-bottom:14px;}
@@ -626,12 +627,14 @@ function fileType(mime){
   if(mime==='application/vnd.google-apps.spreadsheet') return 'sheet';
   if(mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'doc';
   if(mime==='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'sheet';
+  if(mime==='application/pdf') return 'pdf';
   return 'doc';
 }
 
 function fileUrl(id, mime){
   if(mime==='application/vnd.google-apps.spreadsheet') return `https://docs.google.com/spreadsheets/d/${id}/edit`;
   if(mime==='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  if(mime==='application/pdf') return `https://drive.google.com/file/d/${id}/view`;
   return `https://docs.google.com/document/d/${id}/edit`;
 }
 
@@ -973,12 +976,22 @@ async function listFolderContents(folderId){
   do {
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
       `'${folderId}' in parents and trashed=false`
-    )}&fields=nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,lastModifyingUser,parents)&pageSize=200${pageToken?'&pageToken='+pageToken:''}`;
+    )}&fields=nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,lastModifyingUser,parents,shortcutDetails)&pageSize=200${pageToken?'&pageToken='+pageToken:''}`;
     const data = await gfetch(url).then(r=>r.json());
     items = items.concat(data.files||[]);
     pageToken = data.nextPageToken||null;
   } while(pageToken);
   return items;
+}
+
+// Resolve Drive shortcuts to their target's real ID and MIME type.
+// For non-shortcuts, returns the file as-is.
+function resolveFile(f){
+  if(f.mimeType !== 'application/vnd.google-apps.shortcut') return f;
+  const targetId   = f.shortcutDetails?.targetId;
+  const targetMime = f.shortcutDetails?.targetMimeType;
+  if(!targetId) return null; // broken shortcut — skip
+  return { ...f, id: targetId, key: targetId, mimeType: targetMime || f.mimeType };
 }
 
 async function scanDriveAndBuild(){
@@ -1007,6 +1020,8 @@ async function scanDriveAndBuild(){
         .filter(f=>f.mimeType!=='application/vnd.google-apps.folder')
         .filter(f=>f.name.toLowerCase() !== '-roadmap-')
         .filter(f=>f.name.toLowerCase() !== '-to do list-')
+        .map(f=>resolveFile(f))
+        .filter(Boolean)
         .map(f=>({
           key: f.id,
           id: f.id,
@@ -1036,7 +1051,8 @@ async function scanDriveAndBuild(){
     }
 
     const miscDocs = rootFiles
-      .filter(f=> SUPPORTED_MIMES.includes(f.mimeType) || f.mimeType.includes('document') || f.mimeType.includes('spreadsheet'))
+      .map(f=>resolveFile(f))
+      .filter(f=> f && (SUPPORTED_MIMES.includes(f.mimeType) || f.mimeType.includes('document') || f.mimeType.includes('spreadsheet') || f.mimeType==='application/pdf'))
       .map(f=>({
         key: f.id, id: f.id, title: cleanTitle(f.name),
         type: fileType(f.mimeType), url: fileUrl(f.id, f.mimeType),
@@ -1314,11 +1330,23 @@ async function loadDoc(doc){
         desc=fs?fs[0].trim().substring(0,155):txt.substring(0,120);
         content=docHtml(result.value);
       } else {
+        // Generic Google Workspace file — try plain-text export
         const txtR=await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}/export?mimeType=text/plain`);
         const txt=(await txtR.text()).replace(/\s+/g,' ').trim();
         snip=txt.substring(0,320); desc=txt.substring(0,120);
         content=`<div class="dvc"><p>${txt.substring(0,5000)}</p></div>`;
       }
+      cache[doc.key]={snip,desc,content,ok:true};
+
+    } else if(doc.type==='pdf'){
+      // PDFs: fetch metadata for the card description, preview via Drive iframe
+      const metaR=await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?fields=name,size,description`);
+      const meta=await metaR.json();
+      const sizeBytes=parseInt(meta.size||0);
+      const sizeLabel=sizeBytes>1048576?`${(sizeBytes/1048576).toFixed(1)} MB`:sizeBytes>1024?`${Math.round(sizeBytes/1024)} KB`:'< 1 KB';
+      const snip=meta.description||`PDF · ${sizeLabel}`;
+      const desc=`PDF document · ${sizeLabel}`;
+      const content=`<div class="dvc pdf-embed"><iframe src="https://drive.google.com/file/d/${doc.id}/preview" style="width:100%;height:100%;border:none;" allow="autoplay" title="${escHtml(meta.name||doc.title)}"></iframe></div>`;
       cache[doc.key]={snip,desc,content,ok:true};
 
     } else if(doc.type==='sheet'){
@@ -1392,6 +1420,10 @@ function renderModal(key){
 
   if(doc.type==='local'){
     mb.innerHTML=`<iframe src="${doc.url}" sandbox="allow-same-origin allow-scripts allow-forms"></iframe>`;
+    return;
+  }
+  if(doc.type==='pdf'){
+    mb.innerHTML=`<div class="dvc pdf-embed"><iframe src="https://drive.google.com/file/d/${doc.id}/preview" style="width:100%;height:100%;border:none;" allow="autoplay" title="${escHtml(doc.title)}"></iframe></div>`;
     return;
   }
   if(cache[key]?.ok&&cache[key]?.content){
