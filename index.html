@@ -1690,7 +1690,7 @@ function renderTodoPanelContent(doc){
       innerHtml += runHtml;
     }
 
-    if(!allText.trim()) continue;
+    if(!allText.trim() && !bullet) continue;
 
     const containerStyles = [];
     if(indentLevel > 0) containerStyles.push(`margin-left:${indentLevel*18}px`);
@@ -1703,10 +1703,12 @@ function renderTodoPanelContent(doc){
       const listId = bullet.listId;
       const listDef = lists[listId];
       const nestLevel = bullet.nestingLevel || 0;
-      // indentLevel (from pStyle.indentStart) is what our API writes; use it as the
-      // display level so the panel reflects changes immediately after reload.
-      // Fall back to nestingLevel for items that have never been touched via the API.
-      const displayLevel = indentLevel > 0 ? indentLevel : nestLevel;
+      // Our API writes indentFirstLine = level * 36, so divide that back to get the
+      // current level. Fall back to nestingLevel for items not yet touched via the panel.
+      const firstLineMag = pStyle.indentFirstLine?.magnitude || 0;
+      const displayLevel = firstLineMag > 0
+        ? Math.min(5, Math.round(firstLineMag / 36))
+        : nestLevel;
       const isChecked = !!pStyle.checked || (hasRuns && allStrikethrough);
 
       const whoClass = paraWho !== 'none' ? ` ${paraWho}-bg` : '';
@@ -1932,8 +1934,10 @@ async function todoChangeIndent(startIndex, endIndex, nestLevel, delta){
       updateParagraphStyle: {
         range: { startIndex, endIndex: endIndex + 1 },
         paragraphStyle: {
-          indentStart: { magnitude: newLevel * 36, unit: 'PT' },
-          indentFirstLine: { magnitude: 0, unit: 'PT' }
+          // indentFirstLine positions the checkbox; indentStart positions the text.
+          // Keep the 18 pt hanging gap constant so they always move as one unit.
+          indentFirstLine: { magnitude: newLevel * 36,      unit: 'PT' },
+          indentStart:     { magnitude: newLevel * 36 + 18, unit: 'PT' }
         },
         fields: 'indentStart,indentFirstLine'
       }
