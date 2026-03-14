@@ -896,7 +896,7 @@ async function onToken(resp){
   const wasSignedIn = !!token;
   token = resp.access_token;
   const saved = loadAuth();
-  const u = saved?.user || await gfetch('https://www.googleapis.com/oauth2/v3/userinfo').then(r=>r.json());
+  const u = saved?.user || await gfetch('https://www.googleapis.com/oauth2/v3/userinfo').then(r=>r.json()).catch(()=>null);
   saveAuth(resp, u);
   applyUserUI(u);
 
