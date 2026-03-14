@@ -1782,34 +1782,40 @@ async function todoToggleCheckbox(cbEl, startIndex, endIndex){
   setSaveIndicator('saving', 'Saving…');
 
   try{
-    const payload = {
-      requests: [
-        {
-          updateParagraphStyle: {
-            range: { startIndex, endIndex: endIndex + 1 },
-            paragraphStyle: { checked: checked },
-            fields: 'checked'
-          }
-        },
-        {
-          updateTextStyle: {
-            range: { startIndex, endIndex },
-            textStyle: { strikethrough: checked },
-            fields: 'strikethrough'
-          }
+    const requests = [
+      {
+        updateParagraphStyle: {
+          range: { startIndex, endIndex: endIndex + 1 },
+          paragraphStyle: { checked: checked },
+          fields: 'checked'
         }
-      ]
-    };
+      }
+    ];
+
+    // Only add updateTextStyle when there is actual text content.
+    // If startIndex === endIndex the range is zero-length and the API rejects the
+    // entire batchUpdate, causing the catch block to immediately flip the checkbox back.
+    if(startIndex < endIndex){
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex, endIndex },
+          textStyle: { strikethrough: checked },
+          fields: 'strikethrough'
+        }
+      });
+    }
 
     await ensureFreshToken();
     const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}:batchUpdate`,{
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ requests })
     });
 
     if(resp.ok){
       setSaveIndicator('saved', '✓ Saved');
+      // Reload so any competing stale re-render cannot overwrite the new state.
+      setTimeout(() => { setSaveIndicator('', ''); loadTodoPanelDoc(false); }, 800);
     } else {
       const err = await resp.json().catch(()=>({}));
       throw new Error(err.error?.message || `HTTP ${resp.status}`);
