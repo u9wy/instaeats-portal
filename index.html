@@ -312,6 +312,12 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 .tpanel-refresh:hover{border-color:var(--coral);color:var(--coral);}
 .tpanel-refresh.spinning svg{animation:spin .7s linear infinite;}
 
+/* ── Last-edit strip ── */
+.tpanel-edit-info{
+  padding:5px 18px 6px;font-family:'DM Mono',monospace;font-size:10px;
+  color:var(--dim);border-bottom:1px solid var(--border2);flex-shrink:0;display:none;
+}
+
 /* ── Legend ── */
 .tpanel-legend{
   display:flex;align-items:center;gap:10px;padding:8px 16px;
@@ -321,7 +327,7 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 .legend-swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0;}
 .legend-rich{background:rgba(173,216,230,.35);border:1px solid rgba(173,216,230,.6);}
 .legend-josh{background:rgba(180,130,210,.35);border:1px solid rgba(180,130,210,.6);}
-.legend-none{background:rgba(245,232,228,.08);border:1px solid var(--border2);}
+.legend-none{background:rgba(255,255,255,0.88);border:1px solid rgba(255,255,255,.5);}
 
 /* ── Scroll body ── */
 .tpanel-body{
@@ -541,6 +547,7 @@ body.blank-state #todoPanel{ display:none !important; }
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       </button>
     </div>
+    <div class="tpanel-edit-info" id="todoEditInfo"></div>
     <div class="tpanel-legend">
       <div class="legend-item"><div class="legend-swatch legend-rich"></div> Rich</div>
       <div class="legend-item"><div class="legend-swatch legend-josh"></div> Josh</div>
@@ -993,7 +1000,8 @@ function resolveFile(f){
   const targetId   = f.shortcutDetails?.targetId;
   const targetMime = f.shortcutDetails?.targetMimeType;
   if(!targetId) return null; // broken shortcut — skip
-  return { ...f, id: targetId, key: targetId, mimeType: targetMime || f.mimeType };
+  // isShortcut flag lets scanDriveAndBuild fetch the real author/modified time from the target
+  return { ...f, id: targetId, key: targetId, mimeType: targetMime || f.mimeType, isShortcut: true };
 }
 
 async function scanDriveAndBuild(){
@@ -1065,6 +1073,24 @@ async function scanDriveAndBuild(){
         sectionName: 'Misc'
       }));
     if(miscDocs.length) sections.push({id:'misc', name:'Misc', docs:miscDocs, isCore:false});
+
+    // Shortcuts only carry the shortcut's own modifiedTime/author — fetch the real target metadata
+    const shortcutDocs = sections.flatMap(s=>s.docs).filter(d=>d.isShortcut);
+    if(shortcutDocs.length){
+      await Promise.all(shortcutDocs.map(async d=>{
+        try{
+          const r = await gfetch(
+            `https://www.googleapis.com/drive/v3/files/${d.id}?fields=modifiedTime,createdTime,lastModifyingUser`
+          );
+          if(r.ok){
+            const m = await r.json();
+            if(m.modifiedTime) d.modifiedTime = m.modifiedTime;
+            if(m.createdTime)  d.createdTime  = m.createdTime;
+            if(m.lastModifyingUser?.displayName) d.modifiedBy = m.lastModifyingUser.displayName;
+          }
+        }catch(e){}
+      }));
+    }
 
     saveStruct(sections);
     buildPortalFromStructure(sections, false);
@@ -1657,6 +1683,15 @@ async function searchForTodoDoc(){
   }
 }
 
+function updateTodoEditInfo(meta){
+  const el = document.getElementById('todoEditInfo');
+  if(!el || !meta?.modifiedTime) return;
+  const who  = meta.lastModifyingUser?.displayName || 'Unknown';
+  const when = formatRelativeTime(meta.modifiedTime);
+  el.textContent = `Last edited by ${who} · ${when}`;
+  el.style.display = '';
+}
+
 async function loadTodoPanelDoc(showSpinner){
   if(!token){
     setTodoPanelBody('<div class="tpanel-notfound"><p>Sign in to view the To Do list.</p></div>');
@@ -1668,7 +1703,11 @@ async function loadTodoPanelDoc(showSpinner){
   if(showSpinner) setTodoPanelBody('<div class="tpanel-loading"><div class="spin"></div><p>Loading…</p></div>');
   setTodoDot('loading');
   try{
-    const resp = await gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}`);
+    // Fetch doc content and Drive metadata (last modifier) in parallel
+    const [resp, metaResp] = await Promise.all([
+      gfetch(`https://docs.googleapis.com/v1/documents/${todoDocId}`),
+      gfetch(`https://www.googleapis.com/drive/v3/files/${todoDocId}?fields=modifiedTime,lastModifyingUser`)
+    ]);
     if(!resp.ok){
       const errBody = await resp.json().catch(()=>({}));
       throw new Error(errBody.error?.message || `HTTP ${resp.status}`);
@@ -1683,6 +1722,8 @@ async function loadTodoPanelDoc(showSpinner){
     renderTodoPanelContent(doc);
     setTodoDot('ok');
     scheduleTodoPoll();
+    // Update last-edit strip
+    try{ if(metaResp.ok){ updateTodoEditInfo(await metaResp.json()); } }catch(e){}
   }catch(e){
     console.error('Todo load failed', e);
     setTodoDot('err');
@@ -1709,6 +1750,9 @@ function scheduleTodoPoll(){
             if(doc.revisionId !== todoDocRev){
               todoDocRev = doc.revisionId;
               renderTodoPanelContent(doc);
+              // Refresh last-edit strip on new revision
+              gfetch(`https://www.googleapis.com/drive/v3/files/${todoDocId}?fields=modifiedTime,lastModifyingUser`)
+                .then(r=>r.ok?r.json():null).then(m=>{ if(m) updateTodoEditInfo(m); }).catch(()=>{});
             }
             setTodoDot('ok');
           }
