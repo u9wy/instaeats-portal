@@ -95,6 +95,8 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
   line-height:1.55;color:rgba(245,232,228,.5);overflow:hidden;white-space:pre-wrap;
   word-break:break-word;background:rgba(12,3,6,.9);display:none;}
 .snip.on{display:block;}
+.snip.pdf-thumb{padding:0;background:none;}
+.snip.pdf-thumb img{width:100%;height:100%;object-fit:cover;object-position:top left;display:block;}
 .thumb-iframe{position:absolute;inset:0;width:300%;height:300%;border:none;pointer-events:none;
   transform:scale(0.333);transform-origin:top left;}
 .badge{position:absolute;top:10px;right:12px;font-family:'DM Mono',monospace;font-size:9px;
@@ -1289,8 +1291,18 @@ function applyCardData(key,data){
   const skEl=document.getElementById('skel-'+key);
   const dEl =document.getElementById('desc-'+key);
   const sEl =document.getElementById('stats-'+key);
-  if(snEl&&data.snip){snEl.textContent=data.snip;snEl.classList.add('on');}
-  if(skEl&&data.snip){skEl.style.display='none';}
+  if(snEl){
+    if(pdfThumbUrls[key]){
+      // Show rendered first-page image for PDFs
+      snEl.innerHTML=`<img src="${pdfThumbUrls[key]}" alt="PDF preview">`;
+      snEl.classList.add('on','pdf-thumb');
+      if(skEl) skEl.style.display='none';
+    } else if(data.snip){
+      snEl.textContent=data.snip;
+      snEl.classList.add('on');
+      if(skEl) skEl.style.display='none';
+    }
+  }
   if(dEl&&data.desc){dEl.textContent=data.desc;dEl.classList.add('live');}
   if(sEl&&data.rows!==undefined){
     sEl.innerHTML=`<div class="stat"><b>${data.rows}</b> rows</div><div class="stat"><b>${data.cols}</b> cols</div><div class="stat"><b>${data.sheets}</b> sheet${data.sheets!==1?'s':''}</div>`;
@@ -1298,37 +1310,51 @@ function applyCardData(key,data){
   }
 }
 
-// Download a PDF via bearer token, create a session-scoped blob URL, and populate cache snip/desc.
+// Download a PDF via bearer token, create a session-scoped blob URL,
+// render page 1 as a JPEG thumbnail (pdfThumbUrls), and populate cache snip/desc.
 async function loadPdfBinary(doc){
   const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`);
   if(!r.ok) throw new Error(`PDF fetch HTTP ${r.status}`);
   const buf = await r.arrayBuffer();
   // Revoke any previous blob URL for this doc to free memory
   if(pdfBlobUrls[doc.key]) URL.revokeObjectURL(pdfBlobUrls[doc.key]);
-  pdfBlobUrls[doc.key] = URL.createObjectURL(new Blob([buf], {type:'application/pdf'}));
-  // Build a text snip from the raw bytes (look for readable ASCII runs — cheap, no lib needed)
-  let snip = '';
+  const blob = new Blob([buf], {type:'application/pdf'});
+  pdfBlobUrls[doc.key] = URL.createObjectURL(blob);
+
+  // Use file size as fallback snip/desc (shown if PDF.js fails)
+  const kb = Math.round(buf.byteLength / 1024);
+  const sizeLabel = kb > 1024 ? `${(kb/1024).toFixed(1)} MB` : `${kb} KB`;
+  let snip = `PDF · ${sizeLabel}`;
+  let desc = `PDF document · ${sizeLabel}`;
+
+  // Render page 1 to a JPEG data URL via PDF.js for the card thumbnail
   try{
-    const view = new Uint8Array(buf, 0, Math.min(buf.byteLength, 32768));
-    let run = '', best = '';
-    for(let i=0; i<view.length; i++){
-      const c = view[i];
-      if(c>=32 && c<127){ run += String.fromCharCode(c); }
-      else {
-        if(run.length > best.length && /[a-zA-Z]{4,}/.test(run)) best = run;
-        run = '';
-      }
+    if(!window.pdfjsLib){
+      await loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
     }
-    if(run.length > best.length && /[a-zA-Z]{4,}/.test(run)) best = run;
-    snip = best.replace(/\s+/g,' ').replace(/[^\x20-\x7E]/g,'').trim().substring(0, 320);
-  }catch(e){}
-  if(!snip){
-    // Fallback: just show size
-    const kb = Math.round(buf.byteLength/1024);
-    snip = `PDF · ${kb > 1024 ? (kb/1024).toFixed(1)+' MB' : kb+' KB'}`;
+    const pdfDoc = await pdfjsLib.getDocument(pdfBlobUrls[doc.key]).promise;
+    const page   = await pdfDoc.getPage(1);
+    const vp0    = page.getViewport({scale:1});
+    // Scale to ~280px wide — enough detail for a card thumbnail
+    const scale  = 280 / vp0.width;
+    const vp     = page.getViewport({scale});
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.round(vp.width);
+    canvas.height = Math.round(vp.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({canvasContext: ctx, viewport: vp}).promise;
+    pdfThumbUrls[doc.key] = canvas.toDataURL('image/jpeg', 0.82);
+    await pdfDoc.destroy();
+    // Use page count as the desc now that we have a visual thumb
+    desc = `PDF document · ${pdfDoc.numPages} page${pdfDoc.numPages!==1?'s':''} · ${sizeLabel}`;
+  }catch(e){
+    console.warn('[Portal] PDF thumbnail render failed', e);
   }
-  const fs = snip.match(/[A-Z][^.!?]{15,}[.!?]/);
-  const desc = fs ? fs[0].trim().substring(0,155) : snip.substring(0,120) || 'PDF Document';
+
   cache[doc.key] = {snip, desc, ok:true};
 }
 
@@ -1505,6 +1531,8 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
 // PDF blob URLs — session-only, keyed by doc.key. Never stored in localStorage.
 const pdfBlobUrls = {};
+// PDF first-page JPEG thumbnails — session-only data URLs, keyed by doc.key.
+const pdfThumbUrls = {};
 
 let todoDocId            = null;
 let todoDocRev           = null;
