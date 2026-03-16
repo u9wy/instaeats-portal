@@ -315,7 +315,7 @@ body.todo-open #todoPanelTab .tab-chevron{transform:rotate(180deg);}
 /* ── Last-edit strip ── */
 .tpanel-edit-info{
   padding:5px 18px 6px;font-family:'DM Mono',monospace;font-size:10px;
-  color:var(--dim);border-bottom:1px solid var(--border2);flex-shrink:0;display:none;
+  color:var(--dim);border-bottom:1px solid var(--border2);flex-shrink:0;
 }
 
 /* ── Legend ── */
@@ -547,7 +547,7 @@ body.blank-state #todoPanel{ display:none !important; }
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       </button>
     </div>
-    <div class="tpanel-edit-info" id="todoEditInfo"></div>
+    <div class="tpanel-edit-info" id="todoEditInfo">Last edited —</div>
     <div class="tpanel-legend">
       <div class="legend-item"><div class="legend-swatch legend-rich"></div> Rich</div>
       <div class="legend-item"><div class="legend-swatch legend-josh"></div> Josh</div>
@@ -833,7 +833,12 @@ function gsiReady(){
     applyUserUI(savedAuth.user);
     if(savedAuth.expires_at > Date.now()+10000){
       token = savedAuth.access_token;
-      const structStale = !savedStruct || (Date.now()-savedStruct.savedAt) > STRUCT_TTL;
+      // Also treat structs built by old code (no isShortcut field) as stale so
+      // shortcut target metadata gets fetched on the very first load after this deploy.
+      const structMissingShortcutMeta = savedStruct?.sections?.some(s=>
+        s.docs?.some(d=> d.key!=='roadmap' && d.type!=='local' && d.isShortcut===undefined)
+      );
+      const structStale = !savedStruct || (Date.now()-savedStruct.savedAt) > STRUCT_TTL || structMissingShortcutMeta;
       if(structStale){
         setBuildMsg('Refreshing portal structure…');
         scanDriveAndBuild().then(()=>{ hideBuildOverlay(); backgroundRefreshDocs(); });
@@ -1043,7 +1048,8 @@ async function scanDriveAndBuild(){
           createdTime: f.createdTime,
           modifiedTime: f.modifiedTime,
           modifiedBy: f.lastModifyingUser?.displayName || null,
-          sectionName: folderName
+          sectionName: folderName,
+          isShortcut: !!f.isShortcut
         }));
 
       sections.push({ id: folder.id, name: folderName, docs, isCore });
@@ -1070,7 +1076,8 @@ async function scanDriveAndBuild(){
         createdTime: f.createdTime,
         modifiedTime: f.modifiedTime,
         modifiedBy: f.lastModifyingUser?.displayName||null,
-        sectionName: 'Misc'
+        sectionName: 'Misc',
+        isShortcut: !!f.isShortcut
       }));
     if(miscDocs.length) sections.push({id:'misc', name:'Misc', docs:miscDocs, isCore:false});
 
@@ -1685,11 +1692,20 @@ async function searchForTodoDoc(){
 
 function updateTodoEditInfo(meta){
   const el = document.getElementById('todoEditInfo');
-  if(!el || !meta?.modifiedTime) return;
+  if(!el) return;
+  if(!meta?.modifiedTime){ el.textContent = 'Last edited —'; return; }
   const who  = meta.lastModifyingUser?.displayName || 'Unknown';
   const when = formatRelativeTime(meta.modifiedTime);
   el.textContent = `Last edited by ${who} · ${when}`;
-  el.style.display = '';
+}
+
+// Fetch and update the last-edit strip from the Drive API (fire-and-forget)
+function refreshTodoEditInfo(){
+  if(!token || !todoDocId) return;
+  gfetch(`https://www.googleapis.com/drive/v3/files/${todoDocId}?fields=modifiedTime,lastModifyingUser`)
+    .then(r => r.ok ? r.json() : null)
+    .then(m => { if(m) updateTodoEditInfo(m); })
+    .catch(()=>{});
 }
 
 async function loadTodoPanelDoc(showSpinner){
@@ -1722,8 +1738,8 @@ async function loadTodoPanelDoc(showSpinner){
     renderTodoPanelContent(doc);
     setTodoDot('ok');
     scheduleTodoPoll();
-    // Update last-edit strip
-    try{ if(metaResp.ok){ updateTodoEditInfo(await metaResp.json()); } }catch(e){}
+    // Update last-edit strip from the metadata response we already fetched in parallel
+    try{ if(metaResp.ok){ updateTodoEditInfo(await metaResp.json()); } }catch(e){ refreshTodoEditInfo(); }
   }catch(e){
     console.error('Todo load failed', e);
     setTodoDot('err');
@@ -2206,6 +2222,8 @@ function setSaveIndicator(cls, txt){
   if(!el) return;
   el.className = cls;
   el.textContent = txt;
+  // Immediately refresh the last-edit strip after any successful write
+  if(cls === 'saved') refreshTodoEditInfo();
 }
 
 (function(){
