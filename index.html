@@ -1842,9 +1842,21 @@ function rgbToWho(rgbColor){
   const r = (rgbColor.red   || 0) * 255;
   const g = (rgbColor.green || 0) * 255;
   const b = (rgbColor.blue  || 0) * 255;
-  if(r > 240 && g > 240 && b > 240) return 'none';
-  if(b > r + 15 && b > 100 && g > 100) return 'rich';
-  if(r > 100 && b > 100 && r > g + 10 && b > g + 10) return 'josh';
+
+  // Near-white / uncoloured — treat as unassigned
+  if(r > 230 && g > 230 && b > 230) return 'none';
+
+  // Blue (Richard): blue must dominate over BOTH red and green,
+  // AND the blue–red gap must exceed the blue–green gap.
+  // This prevents purples (where b–r is small) from being misclassified here.
+  const blueRedGap   = b - r;
+  const blueGreenGap = b - g;
+  if(b > g && blueRedGap > 20 && blueRedGap > blueGreenGap) return 'rich';
+
+  // Purple (Josh): both red and blue elevated above green,
+  // with red and blue reasonably close to each other (b–r < 50).
+  if(r > 100 && b > 100 && r > g + 10 && b > g + 10 && (b - r) < 65) return 'josh';
+
   return 'none';
 }
 
@@ -2148,7 +2160,7 @@ function renderTodoPanelContent(doc){
       const startIndex = el.startIndex || 0;
       const endIndex   = (el.endIndex || 1) - 1;
 
-      const whoAttr = paraWho !== 'none' ? ` data-who="${paraWho}"` : '';
+      const whoAttr = ` data-who="${paraWho}"`; // always set so dataset.who is never undefined
       frags.push(
         `<div class="todo-item${whoClass}" data-start="${startIndex}" data-end="${endIndex}" data-list="${listId}" data-nest="${displayLevel}"${nestStyle}${whoAttr} draggable="true" ondragstart="todoDragStart(event,this)" ondragover="todoDragOver(event,this)" ondragleave="todoDragLeave(this)" ondrop="todoDrop(event,this)">` +
           `<span class="todo-item-actions">` +
@@ -2844,7 +2856,7 @@ async function openChangelog(key){
   overlay.classList.add('on');
 
   try{
-    const r = await gfetch(`https://www.googleapis.com/drive/v3/revisions?fileId=${doc.id}&fields=revisions(id,modifiedTime,lastModifyingUser,exportLinks,keepForever)&pageSize=25`);
+    const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${doc.id}/revisions?fields=revisions(id,modifiedTime,lastModifyingUser,keepForever)&pageSize=25`);
     if(!r.ok){
       const err = await r.json().catch(()=>({}));
       throw new Error(err.error?.message || `HTTP ${r.status}`);
@@ -3014,13 +3026,19 @@ function restoreTodoSectionStates(){
 window._todoActiveFilter = null;
 
 function applyTodoFilter(who){
+  // Toggle off if clicking the already-active filter
+  if(who && who === window._todoActiveFilter){ who = null; }
   window._todoActiveFilter = who;
+
   // Update legend item highlight
   document.querySelectorAll('.legend-item').forEach(el=>{
-    el.classList.toggle('active-filter', el.dataset.filter === who);
+    el.classList.toggle('active-filter', !!who && el.dataset.filter === who);
   });
-  // Show/hide todo items
-  document.querySelectorAll('.todo-item').forEach(item=>{
+
+  // Show/hide todo items — scope to panel body only
+  const panel = document.getElementById('todoPanelBody');
+  if(!panel) return;
+  panel.querySelectorAll('.todo-item').forEach(item=>{
     if(!who){
       item.classList.remove('assignee-hidden');
     } else {
