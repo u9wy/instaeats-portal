@@ -646,6 +646,36 @@ body.light-mode .grain{opacity:.2;}
   #todoPanel{position:fixed;right:0;top:0;bottom:0;height:100%;z-index:300;}
   body.todo-open #todoPanelTab{right:340px;}
 }
+
+/* ── NESTED SUBSECTIONS ── */
+.subsections-wrap{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+.subsection{border:1px solid var(--border2);border-radius:12px;overflow:hidden;transition:border-color .2s;}
+.subsection:hover{border-color:var(--border);}
+.subsec-hd{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;
+  user-select:none;background:rgba(232,121,106,.04);transition:background .2s;}
+.subsec-hd:hover{background:rgba(232,121,106,.09);}
+.subsec-icon{font-size:13px;flex-shrink:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;}
+.subsec-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:700;flex:1;line-height:1.2;}
+.subsec-title em{font-style:italic;color:var(--coral);}
+.subsec-count{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;flex-shrink:0;}
+.subsec-chevron{width:16px;height:16px;color:var(--dim);flex-shrink:0;transition:transform .25s;}
+.subsection.open .subsec-chevron{transform:rotate(180deg);}
+.subsec-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s ease;}
+.subsection.open .subsec-body{grid-template-rows:1fr;}
+.subsec-inner{overflow:hidden;}
+.subsec-content{padding:12px 16px 16px;}
+/* depth-2 subsections inside subsections */
+.subsec-content .subsections-wrap{margin-top:12px;}
+.subsec-content .subsection .subsec-hd{padding:9px 14px;}
+.subsec-content .subsection .subsec-title{font-size:13px;}
+/* jump dropdown indent */
+.jump-item.jump-sub{padding-left:28px;color:var(--dim);font-size:10px;}
+.jump-item.jump-sub::before{content:'↳ ';opacity:.5;}
+.jump-item.jump-sub2{padding-left:44px;color:var(--dim);font-size:10px;}
+.jump-item.jump-sub2::before{content:'↳ ';opacity:.5;}
+/* search: show subsections that have matches */
+body.searching .subsection{display:none;}
+body.searching .subsection.search-match{display:block;}
 </style>
 </head>
 <body>
@@ -1064,7 +1094,9 @@ function gsiReady(){
       const structMissingShortcutMeta = savedStruct?.sections?.some(s=>
         s.docs?.some(d=> d.key!=='roadmap' && d.type!=='local' && d.isShortcut===undefined)
       );
-      const structStale = !savedStruct || (Date.now()-savedStruct.savedAt) > STRUCT_TTL || structMissingShortcutMeta;
+      // Invalidate cache if it predates nested-folder support (no subfolders field)
+      const structMissingSubfolders = savedStruct?.sections?.some(s=> s.subfolders === undefined);
+      const structStale = !savedStruct || (Date.now()-savedStruct.savedAt) > STRUCT_TTL || structMissingShortcutMeta || structMissingSubfolders;
       if(structStale){
         setBuildMsg('Refreshing portal structure…');
         scanDriveAndBuild().then(()=>{ hideBuildOverlay(); backgroundRefreshDocs(); });
@@ -1235,12 +1267,59 @@ function resolveFile(f){
   return { ...f, id: targetId, key: targetId, mimeType: targetMime || f.mimeType, isShortcut: true };
 }
 
+// Build a section object from a Drive folder, recursively scanning subfolders.
+async function buildSectionFromFolder(folder, sectionName, depth){
+  const folderName = sectionName || cleanTitle(folder.name);
+  const items = await listFolderContents(folder.id);
+
+  const subFolderItems = items.filter(f=>f.mimeType==='application/vnd.google-apps.folder');
+  const fileItems      = items.filter(f=>f.mimeType!=='application/vnd.google-apps.folder');
+
+  const docs = fileItems
+    .filter(f=>f.name.toLowerCase() !== '-roadmap-')
+    .filter(f=>f.name.toLowerCase() !== '-to do list-')
+    .map(f=>resolveFile(f))
+    .filter(Boolean)
+    .map(f=>({
+      key: f.id, id: f.id, title: cleanTitle(f.name),
+      type: fileType(f.mimeType), url: fileUrl(f.id, f.mimeType),
+      desc: '', mimeType: f.mimeType,
+      createdTime: f.createdTime, modifiedTime: f.modifiedTime,
+      modifiedBy: f.lastModifyingUser?.displayName || null,
+      sectionName: folderName, isShortcut: !!f.isShortcut
+    }));
+
+  // Recurse into subfolders (cap at depth 3 to avoid runaway scans)
+  const subfolders = [];
+  if(depth < 3){
+    subFolderItems.sort((a,b)=>cleanTitle(a.name).localeCompare(cleanTitle(b.name)));
+    for(const sf of subFolderItems){
+      const sfName = cleanTitle(sf.name);
+      if(sfName.toLowerCase()==='deprecated') continue;
+      const sub = await buildSectionFromFolder(sf, sfName, depth+1);
+      if(sub) subfolders.push(sub);
+    }
+  }
+
+  return {
+    id: folder.id, name: folderName, docs, subfolders,
+    isCore: folderName.toLowerCase().includes('core'), depth
+  };
+}
+
+// Recursively collect all docs from a section tree (for shortcuts, recently edited, etc.)
+function allDocsInSection(sec){
+  const docs = [...sec.docs];
+  for(const sub of (sec.subfolders||[])) docs.push(...allDocsInSection(sub));
+  return docs;
+}
+
 async function scanDriveAndBuild(){
   setBuildMsg('Reading folder structure…');
   try{
     const rootItems = await listFolderContents(ROOT_FOLDER_ID);
 
-    const folders = rootItems.filter(f=>f.mimeType==='application/vnd.google-apps.folder');
+    const folders  = rootItems.filter(f=>f.mimeType==='application/vnd.google-apps.folder');
     const rootFiles = rootItems.filter(f=>f.mimeType!=='application/vnd.google-apps.folder');
 
     const sections = [];
@@ -1253,43 +1332,18 @@ async function scanDriveAndBuild(){
       const folderName = cleanTitle(folder.name);
       if(folderName.toLowerCase()==='deprecated') continue;
 
-      const isCore = folderName.toLowerCase().includes('core');
-      if(isCore) hasCoreDocuments = true;
-
-      const files = await listFolderContents(folder.id);
-      const docs = files
-        .filter(f=>f.mimeType!=='application/vnd.google-apps.folder')
-        .filter(f=>f.name.toLowerCase() !== '-roadmap-')
-        .filter(f=>f.name.toLowerCase() !== '-to do list-')
-        .map(f=>resolveFile(f))
-        .filter(Boolean)
-        .map(f=>({
-          key: f.id,
-          id: f.id,
-          title: cleanTitle(f.name),
-          type: fileType(f.mimeType),
-          url: fileUrl(f.id, f.mimeType),
-          desc: '',
-          mimeType: f.mimeType,
-          createdTime: f.createdTime,
-          modifiedTime: f.modifiedTime,
-          modifiedBy: f.lastModifyingUser?.displayName || null,
-          sectionName: folderName,
-          isShortcut: !!f.isShortcut
-        }));
-
-      sections.push({ id: folder.id, name: folderName, docs, isCore });
+      const sec = await buildSectionFromFolder(folder, folderName, 0);
+      if(sec.isCore) hasCoreDocuments = true;
+      sections.push(sec);
     }
 
     if(!hasCoreDocuments){
-      sections.unshift({ id:'core-hardcoded', name:'Core Documents', docs:[], isCore:true, synthetic:true });
+      sections.unshift({ id:'core-hardcoded', name:'Core Documents', docs:[], subfolders:[], isCore:true, synthetic:true, depth:0 });
     }
 
     const coreSection = sections.find(s=>s.isCore);
-    if(coreSection){
-      if(!coreSection.docs.find(d=>d.key==='roadmap')){
-        coreSection.docs.unshift({...ROADMAP_CARD, sectionName: coreSection.name});
-      }
+    if(coreSection && !coreSection.docs.find(d=>d.key==='roadmap')){
+      coreSection.docs.unshift({...ROADMAP_CARD, sectionName: coreSection.name});
     }
 
     const miscDocs = rootFiles
@@ -1299,22 +1353,18 @@ async function scanDriveAndBuild(){
         key: f.id, id: f.id, title: cleanTitle(f.name),
         type: fileType(f.mimeType), url: fileUrl(f.id, f.mimeType),
         desc: '', mimeType: f.mimeType,
-        createdTime: f.createdTime,
-        modifiedTime: f.modifiedTime,
+        createdTime: f.createdTime, modifiedTime: f.modifiedTime,
         modifiedBy: f.lastModifyingUser?.displayName||null,
-        sectionName: 'Misc',
-        isShortcut: !!f.isShortcut
+        sectionName: 'Misc', isShortcut: !!f.isShortcut
       }));
-    if(miscDocs.length) sections.push({id:'misc', name:'Misc', docs:miscDocs, isCore:false});
+    if(miscDocs.length) sections.push({id:'misc', name:'Misc', docs:miscDocs, subfolders:[], isCore:false, depth:0});
 
-    // Shortcuts only carry the shortcut's own modifiedTime/author — fetch the real target metadata
-    const shortcutDocs = sections.flatMap(s=>s.docs).filter(d=>d.isShortcut);
-    if(shortcutDocs.length){
-      await Promise.all(shortcutDocs.map(async d=>{
+    // Shortcuts: fetch real author/modified metadata
+    const allShortcuts = sections.flatMap(s=>allDocsInSection(s)).filter(d=>d.isShortcut);
+    if(allShortcuts.length){
+      await Promise.all(allShortcuts.map(async d=>{
         try{
-          const r = await gfetch(
-            `https://www.googleapis.com/drive/v3/files/${d.id}?fields=modifiedTime,createdTime,lastModifyingUser`
-          );
+          const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${d.id}?fields=modifiedTime,createdTime,lastModifyingUser`);
           if(r.ok){
             const m = await r.json();
             if(m.modifiedTime) d.modifiedTime = m.modifiedTime;
@@ -1343,6 +1393,69 @@ async function scanDriveAndBuild(){
 // ══════════════════════════════════════════════
 const SECTION_DELAYS = ['.4s','.5s','.55s','.6s','.65s','.7s','.75s','.8s','.85s','.9s'];
 
+// Render cards into a grid element, adding each to allDocs
+function renderDocsIntoGrid(docs, gridEl, fromCache){
+  docs.forEach(doc=>{
+    allDocs.push(doc);
+    gridEl.insertAdjacentHTML('beforeend', buildCardHtml(doc));
+    if(fromCache){
+      const cached = loadDocCache(doc.key);
+      if(cached && cached.ok){ cache[doc.key]=cached; applyCardData(doc.key,cached); }
+    }
+  });
+}
+
+// Build the title HTML (last word italicised in Playfair style)
+function makeTitleHtml(name){
+  const words = name.split(' ');
+  return words.length>1
+    ? words.slice(0,-1).join(' ')+' <em>'+words[words.length-1]+'</em>'
+    : '<em>'+name+'</em>';
+}
+
+// Count all docs in a section including nested subfolders
+function countAllDocs(sec){
+  return sec.docs.length + (sec.subfolders||[]).reduce((n,s)=>n+countAllDocs(s),0);
+}
+
+// Render a subsection (depth ≥ 1) into a parent container element
+function renderSubsection(container, sec, fromCache){
+  const subfolders = sec.subfolders || [];
+  const totalCount = countAllDocs(sec);
+  if(totalCount === 0 && subfolders.length === 0) return; // skip empty
+
+  const icon = sectionIcon(sec.name);
+  const gridId = 'grid-'+sec.id;
+
+  const subsEl = document.createElement('div');
+  subsEl.className = 'subsection open'; // open by default
+  subsEl.dataset.secId = sec.id;
+  subsEl.innerHTML = `
+    <div class="subsec-hd" onclick="toggleSubsection(this.closest('.subsection'))">
+      <div class="subsec-icon">${icon}</div>
+      <div class="subsec-title">${makeTitleHtml(sec.name)}</div>
+      <div class="subsec-count" id="cnt-${sec.id}">${totalCount} doc${totalCount!==1?'s':''}</div>
+      <svg class="subsec-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="subsec-body">
+      <div class="subsec-inner">
+        <div class="subsec-content">
+          <div class="grid${sec.docs.length===1&&!subfolders.length?' solo':''}" id="${gridId}"></div>
+          ${subfolders.length ? '<div class="subsections-wrap" id="subs-'+sec.id+'"></div>' : ''}
+        </div>
+      </div>
+    </div>`;
+  container.appendChild(subsEl);
+
+  const grid = subsEl.querySelector('#'+gridId);
+  renderDocsIntoGrid(sec.docs, grid, fromCache);
+
+  if(subfolders.length){
+    const subsWrap = subsEl.querySelector('#subs-'+sec.id);
+    subfolders.forEach(sub => renderSubsection(subsWrap, sub, fromCache));
+  }
+}
+
 function buildPortalFromStructure(sections, fromCache){
   const root = document.getElementById('sectionsRoot');
   root.innerHTML='';
@@ -1352,33 +1465,30 @@ function buildPortalFromStructure(sections, fromCache){
     const gridId = 'grid-'+sec.id;
     const delay = SECTION_DELAYS[si] || '.9s';
     const icon = sectionIcon(sec.name);
-    const titleWords = sec.name.split(' ');
-    const titleHtml = titleWords.length>1
-      ? titleWords.slice(0,-1).join(' ')+' <em>'+titleWords[titleWords.length-1]+'</em>'
-      : '<em>'+sec.name+'</em>';
-    const count = sec.docs.length;
+    const subfolders = sec.subfolders || [];
+    const totalCount = countAllDocs(sec);
 
     const section = document.createElement('div');
     section.className='section';
     section.style.cssText=`--d:${delay}`;
+    section.dataset.secId = sec.id;
     section.innerHTML=`
       <div class="sec-hd">
         <div class="sec-icon">${icon}</div>
-        <div class="sec-title">${titleHtml}</div>
-        <div class="sec-count" id="cnt-${sec.id}">${count} doc${count!==1?'s':''}</div>
+        <div class="sec-title">${makeTitleHtml(sec.name)}</div>
+        <div class="sec-count" id="cnt-${sec.id}">${totalCount} doc${totalCount!==1?'s':''}</div>
       </div>
-      <div class="grid${count===1?' solo':''}" id="${gridId}"></div>`;
+      <div class="grid${sec.docs.length===1&&!subfolders.length?' solo':''}" id="${gridId}"></div>
+      ${subfolders.length ? '<div class="subsections-wrap" id="subs-'+sec.id+'"></div>' : ''}`;
     root.appendChild(section);
 
     const grid = section.querySelector('#'+gridId);
-    sec.docs.forEach(doc=>{
-      allDocs.push(doc);
-      grid.insertAdjacentHTML('beforeend', buildCardHtml(doc));
-      if(fromCache){
-        const cached = loadDocCache(doc.key);
-        if(cached && cached.ok){ cache[doc.key]=cached; applyCardData(doc.key,cached); }
-      }
-    });
+    renderDocsIntoGrid(sec.docs, grid, fromCache);
+
+    if(subfolders.length){
+      const subsWrap = section.querySelector('#subs-'+sec.id);
+      subfolders.forEach(sub => renderSubsection(subsWrap, sub, fromCache));
+    }
   });
 
   document.getElementById('recentSection').style.display='';
@@ -1387,6 +1497,10 @@ function buildPortalFromStructure(sections, fromCache){
 
   const total = allDocs.filter(d=>d.key!=='roadmap').length;
   document.getElementById('footerDocCount').textContent = total+' documents from Drive';
+}
+
+function toggleSubsection(el){
+  el.classList.toggle('open');
 }
 
 function buildCardHtml(doc){
@@ -1467,7 +1581,7 @@ function renderRecentlyEdited(sections){
   const sec = document.getElementById('recentSection');
   sec.style.display='';
 
-  const allEditable = sections.flatMap(s=>s.docs).filter(d=>d.type!=='local'&&d.modifiedTime);
+  const allEditable = sections.flatMap(s=>allDocsInSection(s)).filter(d=>d.type!=='local'&&d.modifiedTime);
   allEditable.sort((a,b)=>new Date(b.modifiedTime)-new Date(a.modifiedTime));
   const recent = allEditable.slice(0,8);
 
@@ -2608,28 +2722,75 @@ function performSearch(q){
   if(!query){
     document.body.classList.remove('searching');
     document.querySelectorAll('.card.search-hide').forEach(c=>c.classList.remove('search-hide'));
-    document.querySelectorAll('.section').forEach(s=>s.classList.remove('search-match'));
+    document.querySelectorAll('.section, .subsection').forEach(s=>s.classList.remove('search-match'));
     return;
   }
   document.body.classList.add('searching');
   let anyMatch = false;
-  document.querySelectorAll('.section').forEach(sec=>{
-    let sectionMatch = false;
-    sec.querySelectorAll('.card').forEach(card=>{
+
+  // Helper: evaluate cards inside an element, return true if any match
+  function evalCards(container){
+    let hasMatch = false;
+    container.querySelectorAll(':scope > .grid > .card, :scope > .subsec-body .grid > .card').forEach(card=>{
       const id = card.id.replace('card-','');
       const doc = allDocs.find(d=>d.key===id);
       if(!doc){ card.classList.add('search-hide'); return; }
       const haystack = [
-        doc.title||'',
-        doc.desc||'',
-        doc.modifiedBy||'',
-        doc.sectionName||'',
-        (cache[id]?.desc||''),
-        (cache[id]?.snip||'')
+        doc.title||'', doc.desc||'', doc.modifiedBy||'', doc.sectionName||'',
+        (cache[id]?.desc||''), (cache[id]?.snip||'')
+      ].join(' ').toLowerCase();
+      const match = haystack.includes(query);
+      card.classList.toggle('search-hide', !match);
+      if(match){ hasMatch = true; anyMatch = true; }
+    });
+    return hasMatch;
+  }
+
+  // Process subsections recursively, return true if any card inside matches
+  function evalSubsection(subEl){
+    let subMatch = false;
+    // Check direct cards in this subsection
+    subEl.querySelectorAll(':scope > .subsec-body > .subsec-inner > .subsec-content > .grid > .card').forEach(card=>{
+      const id = card.id.replace('card-','');
+      const doc = allDocs.find(d=>d.key===id);
+      if(!doc){ card.classList.add('search-hide'); return; }
+      const haystack = [
+        doc.title||'', doc.desc||'', doc.modifiedBy||'', doc.sectionName||'',
+        (cache[id]?.desc||''), (cache[id]?.snip||'')
+      ].join(' ').toLowerCase();
+      const match = haystack.includes(query);
+      card.classList.toggle('search-hide', !match);
+      if(match){ subMatch = true; anyMatch = true; }
+    });
+    // Check nested subsections
+    subEl.querySelectorAll(':scope > .subsec-body > .subsec-inner > .subsec-content > .subsections-wrap > .subsection').forEach(nested=>{
+      const nestedMatch = evalSubsection(nested);
+      nested.classList.toggle('search-match', nestedMatch);
+      if(nestedMatch) subMatch = true;
+    });
+    return subMatch;
+  }
+
+  document.querySelectorAll('.section').forEach(sec=>{
+    let sectionMatch = false;
+    // Direct cards in section
+    sec.querySelectorAll(':scope > .grid > .card').forEach(card=>{
+      const id = card.id.replace('card-','');
+      const doc = allDocs.find(d=>d.key===id);
+      if(!doc){ card.classList.add('search-hide'); return; }
+      const haystack = [
+        doc.title||'', doc.desc||'', doc.modifiedBy||'', doc.sectionName||'',
+        (cache[id]?.desc||''), (cache[id]?.snip||'')
       ].join(' ').toLowerCase();
       const match = haystack.includes(query);
       card.classList.toggle('search-hide', !match);
       if(match){ sectionMatch = true; anyMatch = true; }
+    });
+    // Subsections
+    sec.querySelectorAll(':scope > .subsections-wrap > .subsection').forEach(subEl=>{
+      const subMatch = evalSubsection(subEl);
+      subEl.classList.toggle('search-match', subMatch);
+      if(subMatch) sectionMatch = true;
     });
     sec.classList.toggle('search-match', sectionMatch);
   });
@@ -2664,10 +2825,17 @@ document.addEventListener('keydown', e=>{
 function buildJumpDropdown(sections){
   const dd = document.getElementById('jumpDropdown');
   if(!dd) return;
-  dd.innerHTML = sections.map(s=>{
-    const elId = 'grid-' + s.id;
-    return `<button class="jump-item" onclick="jumpToSection('${elId}');toggleJumpDropdown(false)">${s.name}</button>`;
-  }).join('');
+  const items = [];
+  function addItems(secs, depth){
+    secs.forEach(s=>{
+      const cls = depth===1 ? 'jump-item jump-sub' : depth>=2 ? 'jump-item jump-sub2' : 'jump-item';
+      const elId = 'grid-' + s.id;
+      items.push(`<button class="${cls}" onclick="jumpToSection('${elId}');toggleJumpDropdown(false)">${s.name}</button>`);
+      if((s.subfolders||[]).length) addItems(s.subfolders, depth+1);
+    });
+  }
+  addItems(sections, 0);
+  dd.innerHTML = items.join('');
 }
 
 function toggleJumpDropdown(force){
@@ -2684,8 +2852,11 @@ function toggleJumpDropdown(force){
 function jumpToSection(gridId){
   const el = document.getElementById(gridId);
   if(!el) return;
-  const section = el.closest('.section');
-  if(section) section.scrollIntoView({behavior:'smooth', block:'start'});
+  // For subsections: ensure the parent subsection is open first
+  const subsEl = el.closest('.subsection');
+  if(subsEl && !subsEl.classList.contains('open')) subsEl.classList.add('open');
+  const target = subsEl || el.closest('.section');
+  if(target) target.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 // ══════════════════════════════════════════════
