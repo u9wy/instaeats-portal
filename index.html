@@ -1428,7 +1428,7 @@ function renderSubsection(container, sec, fromCache){
   const gridId = 'grid-'+sec.id;
 
   const subsEl = document.createElement('div');
-  subsEl.className = 'subsection open'; // open by default
+  subsEl.className = 'subsection'; // collapsed by default
   subsEl.dataset.secId = sec.id;
   subsEl.innerHTML = `
     <div class="subsec-hd" onclick="toggleSubsection(this.closest('.subsection'))">
