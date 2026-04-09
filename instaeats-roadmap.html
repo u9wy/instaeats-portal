@@ -273,6 +273,16 @@ body.readonly .drag-handle{display:none !important;}
   box-shadow:0 3px 0 0 var(--coral), 0 4px 24px rgba(0,0,0,0.4) !important;
 }
 
+/* TOUCH DRAG GHOST */
+.task-drag-ghost{
+  position:fixed;z-index:9000;pointer-events:none;
+  opacity:0.85;border-radius:12px;
+  box-shadow:0 16px 48px rgba(0,0,0,0.6),0 0 0 1.5px var(--coral);
+  transform:scale(1.03);
+  transition:transform .1s ease;
+  list-style:none;
+}
+
 /* ADD ITEM BUTTON */
 .add-task-btn{
   display:flex;align-items:center;gap:8px;padding:10px 16px;margin-top:4px;
@@ -1101,6 +1111,7 @@ function renderAll(){
   attachObservers();
   updatePhaseDoneStates();
   attachDragHandlers();
+  attachTouchDragHandlers();
 }
 
 function buildPhaseEl(phase, pi){
@@ -1229,6 +1240,134 @@ document.addEventListener('mouseup', ()=>{
     document.querySelectorAll('li.task[draggable]').forEach(el=>el.removeAttribute('draggable'));
   }
 });
+
+// ─────────────────────────────────────────────────────────────
+// TOUCH DRAG (for touchscreen reordering)
+// ─────────────────────────────────────────────────────────────
+let _touchDrag = null; // { li, pi, si, ii, ghost, offsetX, offsetY }
+let _touchOver = null; // li currently hovered
+
+function attachTouchDragHandlers(){
+  if(isReadOnly) return;
+  document.querySelectorAll('li.task .drag-handle').forEach(handle=>{
+    handle.addEventListener('touchstart', onHandleTouchStart, {passive:false});
+  });
+}
+
+function onHandleTouchStart(e){
+  if(isReadOnly) return;
+  e.preventDefault(); // prevent scroll while dragging from handle
+  const li = e.currentTarget.closest('li.task');
+  if(!li) return;
+
+  const touch = e.touches[0];
+  const rect = li.getBoundingClientRect();
+
+  // Clone the card as a floating ghost
+  const ghost = li.cloneNode(true);
+  ghost.className = li.className + ' task-drag-ghost';
+  ghost.style.width  = rect.width  + 'px';
+  ghost.style.height = rect.height + 'px';
+  ghost.style.left   = rect.left   + 'px';
+  ghost.style.top    = rect.top    + 'px';
+  document.body.appendChild(ghost);
+
+  li.classList.add('dragging');
+
+  _touchDrag = {
+    li,
+    pi: parseInt(li.dataset.pi),
+    si: parseInt(li.dataset.si),
+    ii: parseInt(li.dataset.ii),
+    ghost,
+    offsetX: touch.clientX - rect.left,
+    offsetY: touch.clientY - rect.top,
+  };
+
+  document.addEventListener('touchmove',  onTouchDragMove,  {passive:false});
+  document.addEventListener('touchend',   onTouchDragEnd,   {passive:false});
+  document.addEventListener('touchcancel',onTouchDragEnd,   {passive:false});
+}
+
+function onTouchDragMove(e){
+  if(!_touchDrag) return;
+  e.preventDefault(); // block page scroll during drag
+
+  const touch = e.touches[0];
+  const x = touch.clientX - _touchDrag.offsetX;
+  const y = touch.clientY - _touchDrag.offsetY;
+
+  _touchDrag.ghost.style.left = x + 'px';
+  _touchDrag.ghost.style.top  = y + 'px';
+
+  // Find which task li the finger is over (excluding the dragged one)
+  const cx = touch.clientX, cy = touch.clientY;
+
+  // Temporarily hide ghost so elementFromPoint works
+  _touchDrag.ghost.style.display = 'none';
+  const elBelow = document.elementFromPoint(cx, cy);
+  _touchDrag.ghost.style.display = '';
+
+  const targetLi = elBelow ? elBelow.closest('li.task') : null;
+
+  // Clear previous indicator
+  if(_touchOver && _touchOver !== targetLi){
+    _touchOver.classList.remove('drag-over-above','drag-over-below');
+  }
+
+  if(targetLi && targetLi !== _touchDrag.li){
+    const tgtPi = parseInt(targetLi.dataset.pi);
+    const tgtSi = parseInt(targetLi.dataset.si);
+    // Only show indicator within same section
+    if(tgtPi === _touchDrag.pi && tgtSi === _touchDrag.si){
+      const rect = targetLi.getBoundingClientRect();
+      const below = cy > rect.top + rect.height / 2;
+      targetLi.classList.remove('drag-over-above','drag-over-below');
+      targetLi.classList.add(below ? 'drag-over-below' : 'drag-over-above');
+      _touchOver = targetLi;
+    } else {
+      _touchOver = null;
+    }
+  } else {
+    _touchOver = null;
+  }
+}
+
+function onTouchDragEnd(e){
+  if(!_touchDrag) return;
+
+  // Remove ghost
+  _touchDrag.ghost.remove();
+  _touchDrag.li.classList.remove('dragging');
+
+  // Clear indicators
+  if(_touchOver){
+    const tgtPi = parseInt(_touchOver.dataset.pi);
+    const tgtSi = parseInt(_touchOver.dataset.si);
+    const tgtIi = parseInt(_touchOver.dataset.ii);
+    const above  = _touchOver.classList.contains('drag-over-above');
+    _touchOver.classList.remove('drag-over-above','drag-over-below');
+
+    if(tgtPi === _touchDrag.pi && tgtSi === _touchDrag.si && tgtIi !== _touchDrag.ii){
+      const items = roadmapData.phases[tgtPi].sections[tgtSi].items;
+      const [moved] = items.splice(_touchDrag.ii, 1);
+      let insertAt = tgtIi;
+      if(_touchDrag.ii < tgtIi) insertAt = tgtIi - 1;
+      if(!above) insertAt += 1;
+      insertAt = Math.max(0, Math.min(insertAt, items.length));
+      items.splice(insertAt, 0, moved);
+      renderAll();
+      schedSave();
+    }
+  }
+
+  document.removeEventListener('touchmove',  onTouchDragMove);
+  document.removeEventListener('touchend',   onTouchDragEnd);
+  document.removeEventListener('touchcancel',onTouchDragEnd);
+
+  _touchDrag = null;
+  _touchOver = null;
+}
 
 function onTaskDragStart(e){
   if(!this.getAttribute('draggable')){
