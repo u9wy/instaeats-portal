@@ -587,8 +587,8 @@ let SHEET_NAME = null; // resolved dynamically
 const HARDCODED_SHEET_ID = '1Mww5az9g9-TVDEaXRUuvYvA7_C_LZqmz6FYD_DEAsuE';
 // ─────────────────────────────────────────────────────────────────────────
 // Sheet columns (0-indexed): A=phase_id B=phase_name C=phase_layout D=section_title E=section_pill F=item_icon G=item_title H=item_desc I=item_status
-const COL = {phase_id:0,phase_name:1,phase_layout:2,section_title:3,section_pill:4,item_icon:5,item_title:6,item_desc:7,item_status:8};
-const HEADERS = ['phase_id','phase_name','phase_layout','section_title','section_pill','item_icon','item_title','item_desc','item_status'];
+const COL = {phase_id:0,phase_name:1,phase_layout:2,section_title:3,section_pill:4,item_icon:5,item_title:6,item_desc:7,item_status:8,item_ctaUrl:9};
+const HEADERS = ['phase_id','phase_name','phase_layout','section_title','section_pill','item_icon','item_title','item_desc','item_status','item_ctaUrl'];
 
 let token = null;
 let tokenClient = null;
@@ -897,13 +897,13 @@ function dataToRows(data){
     for(const sec of phase.sections){
       if(sec.items.length === 0){
         // Write a row with empty item fields so the section/phase is preserved
-        rows.push([phase.id, phase.name, phase.layout, sec.title, sec.pill, '', '', '', '']);
+        rows.push([phase.id, phase.name, phase.layout, sec.title, sec.pill, '', '', '', '', '']);
       } else {
         for(const item of sec.items){
           rows.push([
             phase.id, phase.name, phase.layout,
             sec.title, sec.pill,
-            item.icon||'', item.title||'', item.desc||'', item.status||'todo'
+            item.icon||'', item.title||'', item.desc||'', item.status||'todo', item.ctaUrl||''
           ]);
         }
       }
@@ -930,6 +930,7 @@ function rowsToData(rows){
     const item_title   = row[COL.item_title]  || '';
     const item_desc    = row[COL.item_desc]   || '';
     const item_status  = row[COL.item_status] || 'todo';
+    const item_ctaUrl  = row[COL.item_ctaUrl] || '';
 
     if(!phase_id) continue;
 
@@ -952,7 +953,7 @@ function rowsToData(rows){
 
     // Add item if it has a title
     if(item_title){
-      sec.items.push({icon:item_icon, title:item_title, desc:item_desc, status:item_status});
+      sec.items.push({icon:item_icon, title:item_title, desc:item_desc, status:item_status, ctaUrl:item_ctaUrl});
     }
   }
 
@@ -961,7 +962,7 @@ function rowsToData(rows){
 }
 
 async function readSheetData(){
-  const resp = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${SHEET_NAME}!A:I`);
+  const resp = await gfetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${SHEET_NAME}!A:J`);
   if(!resp.ok){ const e=new Error('Read failed'); e.status=resp.status; throw e; }
   const json = await resp.json();
   return rowsToData(json.values);
@@ -1548,7 +1549,7 @@ function saveModal(){
     desc: document.getElementById('mDesc').value.trim(),
     icon: document.getElementById('mIcon').value.trim()||'📌',
     status: document.getElementById('mStatus').value,
-    ctaUrl: document.getElementById('mCtaUrl').value.trim()||''
+    ctaUrl: (document.getElementById('mCtaUrl')||{value:''}).value.trim()||''
   };
   if(!item.title){ alert('Please enter a title'); return; }
   const items = roadmapData.phases[pi].sections[si].items;
