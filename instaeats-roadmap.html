@@ -247,6 +247,15 @@ body.readonly #readOnlyBadge{ display:inline-block; }
 .task.done{opacity:.7;}
 .task.done .task-text{text-decoration:line-through;color:var(--dim);}
 .task.done .task-text strong{color:var(--dim);}
+.task-cta{
+  display:inline-flex;align-items:center;gap:4px;
+  font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;
+  padding:2px 8px;border-radius:100px;
+  background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.3);
+  color:#4ade80;text-decoration:none;flex-shrink:0;margin-left:6px;
+  transition:.15s;white-space:nowrap;
+}
+.task-cta:hover{background:rgba(74,222,128,0.22);border-color:rgba(74,222,128,0.55);color:#6ef09a;}
 
 /* DRAG HANDLE */
 .drag-handle{
@@ -431,6 +440,10 @@ footer{position:relative;z-index:10;border-top:1px solid rgba(232,121,106,0.15);
         <option value="inprogress">🟡 In Progress</option>
         <option value="done">✅ Done</option>
       </select>
+    </div>
+    <div class="modal-field">
+      <label>CALL TO ACTION URL <span style="font-size:9px;color:var(--dim)">(opens when item is marked Done)</span></label>
+      <input type="url" id="mCtaUrl" placeholder="https://…">
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -1189,11 +1202,15 @@ function buildTrackHeaderHtml(sec, pi, si, side){
 function buildTaskHtml(item, pi, si, ii, side=''){
   const statusClass = item.status||'todo';
   const taskClass = `task task-${getPillType(pi,si)} ${statusClass==='done'?'done':''}`;
+  const hasCta = item.ctaUrl && statusClass==='done';
+  const ctaBadge = hasCta
+    ? `<a class="task-cta" href="${escHtml(item.ctaUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ View</a>`
+    : `<a class="task-cta" href="#" style="display:none" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">↗ View</a>`;
   return `<li class="${taskClass}" data-pi="${pi}" data-si="${si}" data-ii="${ii}">
     <div class="drag-handle" title="Drag to reorder" onmousedown="onHandleMouseDown(event)" onmouseup="onHandleMouseUp(event)">⠿</div>
     <div class="status-dot ${statusClass}" onclick="cycleStatus(${pi},${si},${ii},event)" title="Click to cycle status"></div>
     <span class="task-icon">${item.icon||'📌'}</span>
-    <span class="task-body"><span class="task-text"><strong>${escHtml(item.title)}</strong>${item.desc?' — '+escHtml(item.desc):''}</span></span>
+    <span class="task-body"><span class="task-text"><strong>${escHtml(item.title)}</strong>${item.desc?' — '+escHtml(item.desc):''}</span>${ctaBadge}</span>
     <div class="task-actions">
       <button onclick="openEditItem(${pi},${si},${ii},event)">✎</button>
       <button class="btn-del-task" onclick="deleteItem(${pi},${si},${ii},event)">✕</button>
@@ -1469,6 +1486,20 @@ function cycleStatus(pi, si, ii, e){
     const dot = li.querySelector('.status-dot');
     dot.className = 'status-dot '+item.status;
     if(item.status==='done') li.classList.add('done'); else li.classList.remove('done');
+    // Refresh CTA badge visibility
+    const cta = li.querySelector('.task-cta');
+    if(cta){
+      if(item.status==='done' && item.ctaUrl){
+        cta.href = item.ctaUrl;
+        cta.style.display = 'inline-flex';
+      } else {
+        cta.style.display = 'none';
+      }
+    }
+  }
+  // Open CTA URL when item is marked done
+  if(item.status==='done' && item.ctaUrl){
+    window.open(item.ctaUrl, '_blank', 'noopener,noreferrer');
   }
   updatePhaseDoneStates();
   schedSave();
@@ -1492,6 +1523,7 @@ function openAddItem(pi, si){
   document.getElementById('mDesc').value='';
   document.getElementById('mIcon').value='📌';
   document.getElementById('mStatus').value='todo';
+  document.getElementById('mCtaUrl').value='';
   document.getElementById('editModal').classList.add('visible');
 }
 
@@ -1504,6 +1536,7 @@ function openEditItem(pi, si, ii, e){
   document.getElementById('mDesc').value=item.desc||'';
   document.getElementById('mIcon').value=item.icon||'📌';
   document.getElementById('mStatus').value=item.status||'todo';
+  document.getElementById('mCtaUrl').value=item.ctaUrl||'';
   document.getElementById('editModal').classList.add('visible');
 }
 
@@ -1514,7 +1547,8 @@ function saveModal(){
     title: document.getElementById('mTitle').value.trim(),
     desc: document.getElementById('mDesc').value.trim(),
     icon: document.getElementById('mIcon').value.trim()||'📌',
-    status: document.getElementById('mStatus').value
+    status: document.getElementById('mStatus').value,
+    ctaUrl: document.getElementById('mCtaUrl').value.trim()||''
   };
   if(!item.title){ alert('Please enter a title'); return; }
   const items = roadmapData.phases[pi].sections[si].items;
