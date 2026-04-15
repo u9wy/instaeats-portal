@@ -886,6 +886,9 @@ function extractEntitiesFromSpec(spec) {
 // ═══════════════════════════════════════════════════
 const GROUP_ORDER = ['Core','Business','Content','Social','Library','Messaging','Commerce','Gamification','Discovery','Profile','Other'];
 
+const H_GAP = 30; // horizontal gap between entity boxes
+const V_GAP = 48; // minimum vertical gap between rows
+
 function computeEntityPositions(entities) {
   const groups = {};
   for (const [name, ent] of Object.entries(entities)) {
@@ -897,12 +900,14 @@ function computeEntityPositions(entities) {
   for (const group of GROUP_ORDER) {
     const entArr = groups[group] || [];
     if (!entArr.length) continue;
+    // Use actual box heights so rows never overlap when fields are expanded
+    const rowMaxH = Math.max(...entArr.map(n => getEntityBoxH(n)));
     let colX = 80;
     for (const name of entArr) {
       positions[name] = { x: colX, y: rowY };
-      colX += 220;
+      colX += BOX_W + H_GAP;
     }
-    rowY += 240;
+    rowY += rowMaxH + V_GAP;
   }
   return positions;
 }
@@ -1200,23 +1205,63 @@ function toggleAllFields() {
   showAllFields = !showAllFields;
   const btn = document.getElementById('toggleFieldsBtn');
   if (btn) btn.classList.toggle('active', showAllFields);
+  // Recompute layout so expanded boxes never overlap each other
+  if (SCHEMA && SCHEMA.entities) POSITIONS = computeEntityPositions(SCHEMA.entities);
   renderDiagram();
 }
+
+// SVG text escape helper
+function escSvg(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function renderDiagram() {
   const svg = document.getElementById('diagram-svg');
   if (!svg) return;
   const { x, y, scale } = diagramTransform;
 
-  let defs = `<defs>
+  const defs = `<defs>
     <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="rgba(232,121,106,.45)"/></marker>
     <marker id="arr-hi" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#e8796a"/></marker>
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
 
-  let content = '';
+  // ── PASS 0: compute label positions, then push apart to avoid overlap ──
+  const labelData = [];
+  SCHEMA.relationships.forEach(rel => {
+    const fp = POSITIONS[rel.from], tp = POSITIONS[rel.to];
+    if (!fp || !tp) return;
+    const fh = getEntityBoxH(rel.from), th = getEntityBoxH(rel.to);
+    const isSelf = rel.from === rel.to;
+    let lx, ly;
+    if (isSelf) {
+      lx = fp.x + BOX_W + 58; ly = fp.y + fh / 2;
+    } else {
+      const fx = fp.x + BOX_W / 2, fy = fp.y + fh / 2;
+      const tx = tp.x + BOX_W / 2, ty = tp.y + th / 2;
+      lx = (fx + tx) / 2; ly = (fy + ty) / 2;
+    }
+    labelData.push({ rel, lx, ly });
+  });
 
-  // Relationships
+  // Simple iterative push-apart collision avoidance (3 iterations)
+  const MIN_LABEL_D = 20;
+  for (let iter = 0; iter < 3; iter++) {
+    for (let i = 0; i < labelData.length; i++) {
+      for (let j = i + 1; j < labelData.length; j++) {
+        const a = labelData[i], b = labelData[j];
+        const dx = b.lx - a.lx, dy = b.ly - a.ly;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+        if (dist < MIN_LABEL_D) {
+          const push = (MIN_LABEL_D - dist) / 2 + 1;
+          const nx = dx / dist, ny = dy / dist || 1;
+          a.lx -= nx * push; a.ly -= ny * push;
+          b.lx += nx * push; b.ly += ny * push;
+        }
+      }
+    }
+  }
+
+  // ── PASS 1: relationship paths ──
+  let paths = '';
   SCHEMA.relationships.forEach(rel => {
     const fp = POSITIONS[rel.from], tp = POSITIONS[rel.to];
     if (!fp || !tp) return;
@@ -1234,49 +1279,60 @@ function renderDiagram() {
       pathD = `M${fx},${fy} Q${cx},${cy} ${tx},${ty}`;
     }
     const strokeColor = isHi ? 'rgba(232,121,106,.85)' : 'rgba(232,121,106,.18)';
-    content += `<path d="${pathD}" stroke="${strokeColor}" stroke-width="${isHi ? 2 : 1.5}" fill="none" marker-end="url(#${isHi ? 'arr-hi' : 'arr'})" stroke-dasharray="${isHi ? '0' : '4,3'}"/>`;
-    if (isHi) {
-      const lx = (POSITIONS[rel.from].x + BOX_W / 2 + POSITIONS[rel.to].x + BOX_W / 2) / 2;
-      const ly = (POSITIONS[rel.from].y + getEntityBoxH(rel.from) / 2 + POSITIONS[rel.to].y + getEntityBoxH(rel.to) / 2) / 2;
-      content += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle" fill="rgba(232,121,106,.9)" font-size="9" font-family="DM Mono,monospace">${rel.label}</text>`;
-    }
+    paths += `<path d="${pathD}" stroke="${strokeColor}" stroke-width="${isHi ? 2 : 1.5}" fill="none" marker-end="url(#${isHi ? 'arr-hi' : 'arr'})" stroke-dasharray="${isHi ? '0' : '4,3'}"/>`;
   });
 
-  // Entity boxes
+  // ── PASS 2: entity boxes ──
+  let boxes = '';
   for (const [name, pos] of Object.entries(POSITIONS)) {
     const ent = SCHEMA.entities[name];
     if (!ent) continue;
     const bh = getEntityBoxH(name);
     const isActive = name === currentEntity || name === highlightedEntity;
 
-    if (isActive) content += `<rect x="${pos.x - 3}" y="${pos.y - 3}" width="${BOX_W + 6}" height="${bh + 6}" rx="13" fill="${ent.color}18" filter="url(#glow)"/>`;
-    content += `<rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="${ent.color}0d" stroke="${isActive ? ent.color : ent.color + '44'}" stroke-width="${isActive ? 1.5 : 1}"/>`;
-    content += `<rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${BOX_H}" rx="10" fill="${ent.color}30" stroke="${isActive ? ent.color : ent.color + '44'}" stroke-width="${isActive ? 1.5 : 1}"/>`;
-    content += `<rect x="${pos.x}" y="${pos.y + BOX_H - 10}" width="${BOX_W}" height="10" fill="${ent.color}30" stroke="none"/>`;
-    content += `<text x="${pos.x + 12}" y="${pos.y + 22}" dominant-baseline="middle" fill="${ent.color}" font-size="13">${ent.icon}</text>`;
-    content += `<text x="${pos.x + 30}" y="${pos.y + 22}" dominant-baseline="middle" fill="#f5e8e4" font-size="11" font-weight="700" font-family="Playfair Display,serif">${name}</text>`;
+    if (isActive) boxes += `<rect x="${pos.x - 3}" y="${pos.y - 3}" width="${BOX_W + 6}" height="${bh + 6}" rx="13" fill="${ent.color}18" filter="url(#glow)"/>`;
+    boxes += `<rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="${ent.color}0d" stroke="${isActive ? ent.color : ent.color + '44'}" stroke-width="${isActive ? 1.5 : 1}"/>`;
+    boxes += `<rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${BOX_H}" rx="10" fill="${ent.color}30" stroke="${isActive ? ent.color : ent.color + '44'}" stroke-width="${isActive ? 1.5 : 1}"/>`;
+    boxes += `<rect x="${pos.x}" y="${pos.y + BOX_H - 10}" width="${BOX_W}" height="10" fill="${ent.color}30" stroke="none"/>`;
+    boxes += `<text x="${pos.x + 12}" y="${pos.y + 22}" dominant-baseline="middle" fill="${ent.color}" font-size="13">${ent.icon}</text>`;
+    boxes += `<text x="${pos.x + 30}" y="${pos.y + 22}" dominant-baseline="middle" fill="#f5e8e4" font-size="11" font-weight="700" font-family="Playfair Display,serif">${escSvg(name)}</text>`;
     const displayFields = getDisplayFields(ent);
-    // Divider line between relationship and plain fields when showing all
     let dividerDrawn = false;
-    content += `<g style="cursor:pointer;" onclick="selectEntity('${name}')"><rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="transparent"/>`;
+    boxes += `<g style="cursor:pointer;" onclick="selectEntity('${name}')"><rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="transparent"/>`;
     displayFields.forEach((f, i) => {
       const fy = pos.y + BOX_H + 4 + i * FIELD_H;
       const isPlain = !f.pk && !f.fk;
-      // Draw a subtle divider before first plain field
       if (showAllFields && isPlain && !dividerDrawn) {
         dividerDrawn = true;
-        content += `<line x1="${pos.x + 6}" y1="${fy - 1}" x2="${pos.x + BOX_W - 6}" y2="${fy - 1}" stroke="rgba(232,121,106,.12)" stroke-width="1"/>`;
+        boxes += `<line x1="${pos.x + 6}" y1="${fy - 1}" x2="${pos.x + BOX_W - 6}" y2="${fy - 1}" stroke="rgba(232,121,106,.12)" stroke-width="1"/>`;
       }
       const fc = f.pk ? '#e8796a' : f.fk ? '#6ab4e8' : isPlain ? '#7a6862' : '#c4988e';
       const pfx = f.pk ? '🔑 ' : f.fk ? '→ ' : '· ';
       const nameText = f.name.length > 18 ? f.name.slice(0, 17) + '…' : f.name;
-      const typeHint = isPlain && showAllFields ? ` <tspan fill="#4a3830" font-size="8">${(f.type||'').slice(0,8)}</tspan>` : '';
-      content += `<text x="${pos.x + 10}" y="${fy + FIELD_H / 2}" dominant-baseline="middle" fill="${fc}" font-size="9" font-family="DM Mono,monospace">${pfx}${nameText}${typeHint}</text>`;
+      const typeHint = isPlain && showAllFields ? ` <tspan fill="#4a3830" font-size="8">${escSvg((f.type||'').slice(0,8))}</tspan>` : '';
+      boxes += `<text x="${pos.x + 10}" y="${fy + FIELD_H / 2}" dominant-baseline="middle" fill="${fc}" font-size="9" font-family="DM Mono,monospace">${pfx}${escSvg(nameText)}${typeHint}</text>`;
     });
-    content += '</g>';
+    boxes += '</g>';
   }
 
-  svg.innerHTML = defs + `<g transform="translate(${x},${y}) scale(${scale})">${content}</g>`;
+  // ── PASS 3: relationship labels (always visible, on top of everything) ──
+  let labels = '';
+  labelData.forEach(({ rel, lx, ly }) => {
+    const isHi = highlightedEntity && (rel.from === highlightedEntity || rel.to === highlightedEntity);
+    // Label: "SourceTable.field_name" — tells you exactly what connects these two tables
+    const fieldPart = escSvg(rel.fromField.length > 20 ? rel.fromField.slice(0, 19) + '…' : rel.fromField);
+    const cardPart = rel.type === 'M:N' ? ' ·M:N' : '';
+    const fullTxt = fieldPart + cardPart;
+    const pillW = fullTxt.length * 5.1 + 12;
+    const pillH = 14;
+    const pillOpacity = isHi ? 1 : 0.82;
+    const textOpacity = isHi ? 1 : 0.65;
+    const borderColor = isHi ? 'rgba(232,121,106,.65)' : 'rgba(232,121,106,.22)';
+    labels += `<rect x="${lx - pillW/2}" y="${ly - pillH/2}" width="${pillW}" height="${pillH}" rx="3" fill="rgba(12,4,7,.93)" stroke="${borderColor}" stroke-width="1" opacity="${pillOpacity}"/>`;
+    labels += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle" fill="rgba(232,121,106,${textOpacity})" font-size="8" font-family="DM Mono,monospace">${fullTxt}</text>`;
+  });
+
+  svg.innerHTML = defs + `<g transform="translate(${x},${y}) scale(${scale})">${paths}${boxes}${labels}</g>`;
 }
 
 function renderDiagramLegend() {
