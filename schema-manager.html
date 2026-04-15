@@ -1162,7 +1162,7 @@ function selectEntity(name) {
 // ═══════════════════════════════════════════════════
 // ER DIAGRAM
 // ═══════════════════════════════════════════════════
-const BOX_W = 165, BOX_H = 36, FIELD_H = 18;
+const BOX_W = 200, BOX_H = 36, FIELD_H = 18;
 
 function initDiagram() {
   const svg = document.getElementById('diagram-svg');
@@ -1224,43 +1224,7 @@ function renderDiagram() {
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
 
-  // ── PASS 0: compute label positions, then push apart to avoid overlap ──
-  const labelData = [];
-  SCHEMA.relationships.forEach(rel => {
-    const fp = POSITIONS[rel.from], tp = POSITIONS[rel.to];
-    if (!fp || !tp) return;
-    const fh = getEntityBoxH(rel.from), th = getEntityBoxH(rel.to);
-    const isSelf = rel.from === rel.to;
-    let lx, ly;
-    if (isSelf) {
-      lx = fp.x + BOX_W + 58; ly = fp.y + fh / 2;
-    } else {
-      const fx = fp.x + BOX_W / 2, fy = fp.y + fh / 2;
-      const tx = tp.x + BOX_W / 2, ty = tp.y + th / 2;
-      lx = (fx + tx) / 2; ly = (fy + ty) / 2;
-    }
-    labelData.push({ rel, lx, ly });
-  });
-
-  // Simple iterative push-apart collision avoidance (3 iterations)
-  const MIN_LABEL_D = 20;
-  for (let iter = 0; iter < 3; iter++) {
-    for (let i = 0; i < labelData.length; i++) {
-      for (let j = i + 1; j < labelData.length; j++) {
-        const a = labelData[i], b = labelData[j];
-        const dx = b.lx - a.lx, dy = b.ly - a.ly;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
-        if (dist < MIN_LABEL_D) {
-          const push = (MIN_LABEL_D - dist) / 2 + 1;
-          const nx = dx / dist, ny = dy / dist || 1;
-          a.lx -= nx * push; a.ly -= ny * push;
-          b.lx += nx * push; b.ly += ny * push;
-        }
-      }
-    }
-  }
-
-  // ── PASS 1: relationship paths ──
+  // ── PASS 1: relationship paths (clean lines only, no text on arrows) ──
   let paths = '';
   SCHEMA.relationships.forEach(rel => {
     const fp = POSITIONS[rel.from], tp = POSITIONS[rel.to];
@@ -1282,13 +1246,21 @@ function renderDiagram() {
     paths += `<path d="${pathD}" stroke="${strokeColor}" stroke-width="${isHi ? 2 : 1.5}" fill="none" marker-end="url(#${isHi ? 'arr-hi' : 'arr'})" stroke-dasharray="${isHi ? '0' : '4,3'}"/>`;
   });
 
-  // ── PASS 2: entity boxes ──
+  // ── PASS 2: entity boxes with inline relationship annotations per field ──
+  // Build lookup: which fields in each entity are targeted by FKs from other tables
+  const fkTargets = {}; // { entityName: Set<fieldName> }
+  SCHEMA.relationships.forEach(rel => {
+    if (!fkTargets[rel.to]) fkTargets[rel.to] = new Set();
+    fkTargets[rel.to].add(rel.toField);
+  });
+
   let boxes = '';
   for (const [name, pos] of Object.entries(POSITIONS)) {
     const ent = SCHEMA.entities[name];
     if (!ent) continue;
     const bh = getEntityBoxH(name);
     const isActive = name === currentEntity || name === highlightedEntity;
+    const entityFkTargets = fkTargets[name] || new Set();
 
     if (isActive) boxes += `<rect x="${pos.x - 3}" y="${pos.y - 3}" width="${BOX_W + 6}" height="${bh + 6}" rx="13" fill="${ent.color}18" filter="url(#glow)"/>`;
     boxes += `<rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="${ent.color}0d" stroke="${isActive ? ent.color : ent.color + '44'}" stroke-width="${isActive ? 1.5 : 1}"/>`;
@@ -1296,43 +1268,52 @@ function renderDiagram() {
     boxes += `<rect x="${pos.x}" y="${pos.y + BOX_H - 10}" width="${BOX_W}" height="10" fill="${ent.color}30" stroke="none"/>`;
     boxes += `<text x="${pos.x + 12}" y="${pos.y + 22}" dominant-baseline="middle" fill="${ent.color}" font-size="13">${ent.icon}</text>`;
     boxes += `<text x="${pos.x + 30}" y="${pos.y + 22}" dominant-baseline="middle" fill="#f5e8e4" font-size="11" font-weight="700" font-family="Playfair Display,serif">${escSvg(name)}</text>`;
+
     const displayFields = getDisplayFields(ent);
     let dividerDrawn = false;
     boxes += `<g style="cursor:pointer;" onclick="selectEntity('${name}')"><rect x="${pos.x}" y="${pos.y}" width="${BOX_W}" height="${bh}" rx="10" fill="transparent"/>`;
     displayFields.forEach((f, i) => {
       const fy = pos.y + BOX_H + 4 + i * FIELD_H;
       const isPlain = !f.pk && !f.fk;
+      const isFkTarget = entityFkTargets.has(f.name);
+
+      // Divider line before first plain field in expanded mode
       if (showAllFields && isPlain && !dividerDrawn) {
         dividerDrawn = true;
         boxes += `<line x1="${pos.x + 6}" y1="${fy - 1}" x2="${pos.x + BOX_W - 6}" y2="${fy - 1}" stroke="rgba(232,121,106,.12)" stroke-width="1"/>`;
       }
+
       const fc = f.pk ? '#e8796a' : f.fk ? '#6ab4e8' : isPlain ? '#7a6862' : '#c4988e';
       const pfx = f.pk ? '🔑 ' : f.fk ? '→ ' : '· ';
-      const nameText = f.name.length > 18 ? f.name.slice(0, 17) + '…' : f.name;
-      const typeHint = isPlain && showAllFields ? ` <tspan fill="#4a3830" font-size="8">${escSvg((f.type||'').slice(0,8))}</tspan>` : '';
-      boxes += `<text x="${pos.x + 10}" y="${fy + FIELD_H / 2}" dominant-baseline="middle" fill="${fc}" font-size="9" font-family="DM Mono,monospace">${pfx}${escSvg(nameText)}${typeHint}</text>`;
+      // Truncate name shorter to leave room for right-side annotation
+      const nameText = escSvg(f.name.length > 15 ? f.name.slice(0, 14) + '…' : f.name);
+      boxes += `<text x="${pos.x + 10}" y="${fy + FIELD_H / 2}" dominant-baseline="middle" fill="${fc}" font-size="9" font-family="DM Mono,monospace">${pfx}${nameText}</text>`;
+
+      // Right-aligned annotation: relationship target for FKs, type for PKs / FK-targets / plain fields
+      let rightText = '', rightColor = '';
+      if (f.fk) {
+        // FK field → show which table it points to (e.g. "User")
+        const target = f.fk.split('.')[0];
+        rightText = target.length > 13 ? target.slice(0, 12) + '…' : target;
+        rightColor = 'rgba(106,180,232,.7)';
+      } else if (f.pk || isFkTarget) {
+        // PK / field targeted by other tables → show its type (important reference point)
+        rightText = (f.type || 'uuid').slice(0, 8);
+        rightColor = 'rgba(232,121,106,.55)';
+      } else if (isPlain && showAllFields) {
+        // Plain field in expanded mode → show type
+        rightText = (f.type || '').slice(0, 8);
+        rightColor = 'rgba(122,88,80,.65)';
+      }
+
+      if (rightText) {
+        boxes += `<text x="${pos.x + BOX_W - 7}" y="${fy + FIELD_H / 2}" dominant-baseline="middle" text-anchor="end" fill="${rightColor}" font-size="8" font-family="DM Mono,monospace">${escSvg(rightText)}</text>`;
+      }
     });
     boxes += '</g>';
   }
 
-  // ── PASS 3: relationship labels (always visible, on top of everything) ──
-  let labels = '';
-  labelData.forEach(({ rel, lx, ly }) => {
-    const isHi = highlightedEntity && (rel.from === highlightedEntity || rel.to === highlightedEntity);
-    // Label: "SourceTable.field_name" — tells you exactly what connects these two tables
-    const fieldPart = escSvg(rel.fromField.length > 20 ? rel.fromField.slice(0, 19) + '…' : rel.fromField);
-    const cardPart = rel.type === 'M:N' ? ' ·M:N' : '';
-    const fullTxt = fieldPart + cardPart;
-    const pillW = fullTxt.length * 5.1 + 12;
-    const pillH = 14;
-    const pillOpacity = isHi ? 1 : 0.82;
-    const textOpacity = isHi ? 1 : 0.65;
-    const borderColor = isHi ? 'rgba(232,121,106,.65)' : 'rgba(232,121,106,.22)';
-    labels += `<rect x="${lx - pillW/2}" y="${ly - pillH/2}" width="${pillW}" height="${pillH}" rx="3" fill="rgba(12,4,7,.93)" stroke="${borderColor}" stroke-width="1" opacity="${pillOpacity}"/>`;
-    labels += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle" fill="rgba(232,121,106,${textOpacity})" font-size="8" font-family="DM Mono,monospace">${fullTxt}</text>`;
-  });
-
-  svg.innerHTML = defs + `<g transform="translate(${x},${y}) scale(${scale})">${paths}${boxes}${labels}</g>`;
+  svg.innerHTML = defs + `<g transform="translate(${x},${y}) scale(${scale})">${paths}${boxes}</g>`;
 }
 
 function renderDiagramLegend() {
