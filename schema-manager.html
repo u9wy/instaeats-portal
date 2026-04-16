@@ -746,7 +746,8 @@ async function parseFile(file) {
 // ENTITY EXTRACTION FROM OPENAPI SPEC
 // ═══════════════════════════════════════════════════
 const ENTITY_COLORS = ['#e8796a','#6ab4e8','#b89ad4','#5ec97a','#fbbf24','#f0a090','#80c4e0','#c480b0','#a0d480','#e0a060'];
-const SKIP_SUFFIXES = ['Request','Response','Update','Step','Ingredient','Nutrition','Cover','Suggestion','Summary','State','Preferences','Confirm','Create'];
+// Only skip true request/response DTOs — do NOT skip sub-entity schemas like RecipeStep, HighlightCover, ReactionSummary
+const SKIP_SUFFIXES = ['Request','Response','Confirm','Create'];
 const ICON_MAP = {
   user:'👤',profile:'👤',account:'👤',person:'👤',
   business:'🏪',restaurant:'🏪',company:'🏪',merchant:'🏪',shop:'🏪',
@@ -792,14 +793,17 @@ function camelToLabel(s) {
   return s.replace(/_/g,' ').replace(/([A-Z])/g,' $1').trim().toLowerCase();
 }
 
-function resolveProps(schema, allSchemas) {
+function resolveProps(schema, allSchemas, _depth = 0) {
+  if (_depth > 5 || !schema) return { props: {}, required: [] };
   let props = {}, required = [];
   if (schema.properties) { props = { ...schema.properties }; required = schema.required || []; }
   if (schema.allOf) {
     for (const part of schema.allOf) {
       const resolved = part.$ref ? allSchemas[part.$ref.split('/').pop()] : part;
-      if (resolved?.properties) Object.assign(props, resolved.properties);
-      if (resolved?.required) required = [...new Set([...required, ...resolved.required])];
+      if (!resolved) continue;
+      const { props: p2, required: r2 } = resolveProps(resolved, allSchemas, _depth + 1);
+      Object.assign(props, p2);
+      required = [...new Set([...required, ...r2])];
     }
   }
   return { props, required };
@@ -807,18 +811,37 @@ function resolveProps(schema, allSchemas) {
 
 function buildField(fname, fdef, required, entityNames) {
   const field = { name: fname, pk: fname === 'id', required: required.includes(fname), nullable: !!fdef.nullable };
+  if (!fdef) { field.type = 'string'; return field; }
+
   if (fdef.$ref) {
     const refName = fdef.$ref.split('/').pop();
     const match = entityNames.find(e => e === refName || e === refName + 's');
-    field.type = 'uuid'; field.fk = match ? `${match}.id` : refName;
+    if (match) {
+      // $ref points to a known entity — treat as a reference (FK-like)
+      field.type = 'object'; field.fk = `${match}.id`;
+    } else {
+      // $ref points to an unknown/utility schema — just show its type name
+      field.type = refName;
+    }
   } else if (fdef.type === 'array') {
     const items = fdef.items;
-    if (items?.$ref) { field.type = `array<${items.$ref.split('/').pop()}>`; }
-    else { field.type = `array<${items?.type || 'any'}>`; }
+    if (items?.$ref) {
+      const refName = items.$ref.split('/').pop();
+      const match = entityNames.find(e => e === refName || e === refName + 's');
+      if (match) {
+        // Array of a known entity — has-many relationship
+        field.type = `array<${match}>`; field.fk = `${match}.id`; field.hasMany = true;
+      } else {
+        field.type = `array<${refName}>`;
+      }
+    } else {
+      field.type = `array<${items?.type || 'any'}>`;
+    }
   } else if (fdef.enum) {
     field.type = 'enum'; field.values = fdef.enum;
   } else if (fdef.format === 'uuid') {
     field.type = 'uuid';
+    // _id / _ids suffix fields — resolve to known entity by pascal-casing the base name
     if (fname.endsWith('_ids') || (fname.endsWith('_id') && fname !== 'id')) {
       const base = fname.replace(/_ids?$/, '');
       const pascal = base.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join('');
@@ -836,8 +859,9 @@ function buildField(fname, fdef, required, entityNames) {
 
 function extractEntitiesFromSpec(spec) {
   const allSchemas = spec?.components?.schemas || spec?.definitions || {};
+
+  // ── PASS 1: schemas that have an `id` property and aren't pure DTOs ──
   const entityNames = [];
-  // Identify entity schemas: object with id:uuid, not request/response sub-types
   for (const [name, schema] of Object.entries(allSchemas)) {
     if (!schema) continue;
     if (SKIP_SUFFIXES.some(s => name.endsWith(s))) continue;
@@ -845,6 +869,33 @@ function extractEntitiesFromSpec(spec) {
     if (!props.id) continue;
     entityNames.push(name);
   }
+
+  // ── PASS 2: schemas directly $ref'd by pass-1 entities but without `id` ──
+  // These are embedded sub-objects (PostLinks, BusinessManager, RecipeStep…) the
+  // user expects to see even though they have no standalone primary key.
+  const refCandidates = new Set();
+  for (const name of entityNames) {
+    const { props } = resolveProps(allSchemas[name], allSchemas);
+    for (const [, fdef] of Object.entries(props)) {
+      if (!fdef) continue;
+      const ref = fdef.$ref
+        ? fdef.$ref.split('/').pop()
+        : (fdef.type === 'array' && fdef.items?.$ref)
+          ? fdef.items.$ref.split('/').pop()
+          : null;
+      if (ref && !entityNames.includes(ref)) refCandidates.add(ref);
+    }
+  }
+  for (const name of refCandidates) {
+    const schema = allSchemas[name];
+    if (!schema) continue;
+    if (SKIP_SUFFIXES.some(s => name.endsWith(s))) continue;
+    const { props } = resolveProps(schema, allSchemas);
+    if (Object.keys(props).length < 2) continue; // skip trivial / empty shells
+    entityNames.push(name);
+  }
+
+  // ── Build entity map ──
   const entities = {};
   entityNames.forEach((name, idx) => {
     const schema = allSchemas[name];
@@ -859,21 +910,22 @@ function extractEntitiesFromSpec(spec) {
       fields,
     };
   });
-  // Generate relationships from FK fields
+
+  // ── Generate relationships from FK fields (only between known entities) ──
   const relationships = [];
   const seen = new Set();
   for (const [entityName, ent] of Object.entries(entities)) {
     for (const field of ent.fields) {
       if (!field.fk || field.pk) continue;
       const targetEntity = field.fk.split('.')[0];
-      if (!entities[targetEntity]) continue;
+      if (!entities[targetEntity]) continue; // never draw arrows to phantom entities
       const key = `${entityName}→${targetEntity}→${field.name}`;
       if (seen.has(key)) continue;
       seen.add(key);
       relationships.push({
         from: entityName, to: targetEntity,
         label: camelToLabel(field.name.replace(/_ids?$/, '')),
-        type: field.name.endsWith('_ids') ? 'M:N' : 'N:1',
+        type: (field.name.endsWith('_ids') || field.hasMany) ? '1:N' : 'N:1',
         fromField: field.name, toField: 'id'
       });
     }
@@ -1292,10 +1344,12 @@ function renderDiagram() {
       // Right-aligned annotation: relationship target for FKs, type for PKs / FK-targets / plain fields
       let rightText = '', rightColor = '';
       if (f.fk) {
-        // FK field → show which table it points to (e.g. "User")
+        // FK field → show target entity only if it actually exists as a box in the diagram
         const target = f.fk.split('.')[0];
-        rightText = target.length > 13 ? target.slice(0, 12) + '…' : target;
-        rightColor = 'rgba(106,180,232,.7)';
+        if (SCHEMA.entities[target]) {
+          rightText = target.length > 13 ? target.slice(0, 12) + '…' : target;
+          rightColor = 'rgba(106,180,232,.7)';
+        }
       } else if (f.pk || isFkTarget) {
         // PK / field targeted by other tables → show its type (important reference point)
         rightText = (f.type || 'uuid').slice(0, 8);
